@@ -45,7 +45,8 @@ func Flush(o Options) {
 		}
 		// -q, first: ~/.curlrc is not read, so nothing it holds (a header, credentials) rides along.
 		// --url and --globoff: the destination is one URL, never an option or a pattern.
-		cmd := exec.Command(curl, "-q", "--globoff", "--silent", "--show-error", "--fail", "--max-time", "10", "--request", "POST",
+		// --noproxy: the plain-http test override to this machine never goes out through a proxy.
+		cmd := exec.Command(curl, "-q", "--globoff", "--noproxy", "127.0.0.1,localhost", "--silent", "--show-error", "--fail", "--max-time", "10", "--request", "POST",
 			"--header", "content-type: application/json", "--user-agent", "caveman-blocks/"+o.Version,
 			"--data-binary", string(payload), "--url", endpoint)
 		detach(cmd) // on Windows a console program started by a detached parent would open a window

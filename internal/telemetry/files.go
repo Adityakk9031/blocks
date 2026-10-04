@@ -97,10 +97,15 @@ func NoteOff(base string, now time.Time) {
 	if err != nil {
 		return
 	}
-	if fi, err := os.Lstat(p); err == nil && !fi.ModTime().Before(now.UTC().Truncate(24*time.Hour)) {
+	fi, err := os.Lstat(p)
+	if err == nil && fi.Mode().IsRegular() && !fi.ModTime().Before(now.UTC().Truncate(24*time.Hour)) {
 		return
 	}
-	touch(base, "telemetry-off", now)
+	if !touch(base, "telemetry-off", now) && err == nil {
+		// A marker that exists but cannot be opened (read-only, another owner) is replaced: temp
+		// file and rename. Without a state directory there is nothing to mark, and none is created.
+		_ = writeSafe(base, "telemetry-off", nil)
+	}
 }
 
 // touch creates base/name if needed, never through a symlinked leaf, and sets its mtime to now.

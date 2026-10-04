@@ -38,7 +38,7 @@ func telemetryCmd() *cobra.Command {
 			}
 			endpoint := o.Endpoint()
 			if endpoint == "" {
-				endpoint = "none; CAVEMAN_BLOCKS_TELEMETRY_URL is not an https URL, so nothing is sent"
+				endpoint = "none; CAVEMAN_BLOCKS_TELEMETRY_URL is not an accepted https URL, so nothing is sent"
 			}
 			fmt.Fprintf(c.OutOrStdout(), "%s · %s\ninstall ID: %s\nshared with the Caveman CLI: %s\nendpoint: %s\n",
 				d.Status, d.Reason, id, shared, endpoint)

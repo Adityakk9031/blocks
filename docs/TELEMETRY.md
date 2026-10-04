@@ -33,10 +33,11 @@ are sent, because that list is public and fixed.
    command without a terminal (run by an agent, in a pipe, by the hook) never saves the default.
 
 Off covers what was counted while it was off. Every `caveman-blocks` process that finds telemetry
-off, the hook included, marks the day. A marked day is never sent, nor any day before it, even after
-telemetry is on again; a day is marked as a whole. Nothing from before telemetry last started is sent
-either. `CI` (control 4) is the one exception: it stops that process from sending and from enrolling,
-and marks nothing, because some agent harnesses set it for every command they run.
+off, the hook included, marks the day before it counts anything. A marked day is never sent, nor any
+day before it, even after telemetry is on again; a day is marked as a whole. Nothing from before
+telemetry last started is sent either. `CI` (control 4) on its own is the one exception: it stops that
+process from sending and from enrolling and marks nothing, because some agent harnesses set it for
+every command they run. A switch or a choice that is off behind `CI` still marks the day.
 
 Only a person at a terminal can turn telemetry on: `telemetry on` refuses anywhere else. An agent or a
 script can turn it off. A `telemetry.json` that cannot be read counts as off and is never replaced by
@@ -137,23 +138,24 @@ oldest first, at most 7 days back, and never activity from a time telemetry was 
 
 - After an interactive command, the CLI starts a detached `caveman-blocks telemetry flush` and exits.
   That process sends the command's events plus any unsent complete days.
-- The hook, once it has written its answer on a pre-run call inside a repo, reads the saved choice,
-  marks the day when telemetry is off, and at most once per 24 hours starts the same detached
-  process. The hook itself opens no connection.
+- On a pre-run call inside a repo the hook reads the saved choice before it counts anything, and
+  marks the day when a switch or a choice has telemetry off. Once it has written its answer it
+  starts the same detached process, at most once per 24 hours. The hook itself opens no connection.
 - The binary contains no network code. `telemetry flush` hands the JSON to the system `curl`
   (`curl -q --globoff --max-time 10`; `-q` keeps `~/.curlrc` out of it); a machine without `curl`
   sends nothing. A failed send is dropped and never fails or slows a command; unsent days are retried
   on the next flush.
 - `CAVEMAN_BLOCKS_TELEMETRY_URL` overrides the destination, for testing. It must be an `https://` URL,
-  or `http://` to `127.0.0.1` or `localhost`, with no `user@` part; with anything else nothing is sent.
+  or `http://` to `127.0.0.1` or `localhost` (never through a proxy), with no `user@` part; with
+  anything else nothing is sent.
 
 Files, all under `$XDG_STATE_HOME/caveman-blocks/` (default `~/.local/state/caveman-blocks/`):
 
 | File | Holds |
 |---|---|
 | `telemetry.json` | the saved choice, install ID, install channel. Written by an interactive command, or by `telemetry off` |
-| `telemetry-attempt` | empty; its mtime is the hook's last daily check |
-| `telemetry-off` | empty; its mtime is the last day a process found telemetry off |
+| `telemetry-attempt` | empty; its mtime is the last time the hook started a flush |
+| `telemetry-off` | empty; its mtime is the last day a process found a switch or a choice off |
 | `telemetry-sent` | the last UTC day whose `daily_usage` was delivered |
 
 ## Where it goes, how long it stays

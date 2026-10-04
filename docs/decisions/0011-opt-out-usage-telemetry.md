@@ -42,11 +42,11 @@ Contract and controls: [TELEMETRY.md](../TELEMETRY.md).
   share matters.
 - Only complete days are sent, so an install that is used for one day and never again reports its
   commands but not that day's usage. Accepted for v1.
-- Off is kept per day: a day on which any process found telemetry off is never sent, so the hours of
-  that day it was on are discarded with it. Accepted; it keeps "off" true without a per-event flag.
-  `CI` does not mark a day: it is an environment, not a person's choice.
-- The hook reads the saved choice on every pre-run call inside a repo, after its answer. Measured
-  against the previous binary over 400 interleaved runs, the median did not move.
+- Off is kept per day: a day on which any process found a switch or a choice off is never sent, so
+  the hours of that day it was on are discarded with it. Accepted; it keeps "off" true without a
+  per-event flag. `CI` alone does not mark a day: it is an environment, not a person's choice.
+- The hook reads the saved choice on every pre-run call inside a repo, before it counts anything.
+  Measured against the previous binary over 400 interleaved runs, the median did not move.
 - Adding a first-party block means adding its name to the receiving function's allowlist, or its
   name is dropped from events.
 - Reading `~/.caveman-cloud/config.json` is the one place this repository knows about the Caveman

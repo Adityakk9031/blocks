@@ -74,8 +74,8 @@ func TestFlush(t *testing.T) {
 					t.Errorf("curl argv missing %q", wanted)
 				}
 			}
-			if !strings.HasPrefix(argv, "-q\n") {
-				t.Errorf("-q must be curl's first argument, or ~/.curlrc is applied: %q", argv[:20])
+			if !strings.HasPrefix(argv, "-q\n--globoff\n--noproxy\n127.0.0.1,localhost\n") {
+				t.Errorf("-q must be curl's first argument (or ~/.curlrc is applied), then --globoff and --noproxy: %q", argv[:60])
 			}
 			for _, forbidden := range []string{"acme-secret-report", "secret-session", "second-secret", "wrong-secret", "private-fingerprint", "private-repo", "today-private", "future-private", "old-private", o.Base, "script text"} {
 				if strings.Contains(argv, forbidden) {

@@ -39,6 +39,9 @@ func rollup(o Options, s State) (events []Event, through string, err error) {
 	// ponytail: a telemetry-off marker dated in the future (the clock was ahead while telemetry was
 	// off) holds usage back until that date; failing closed beats sending an off day.
 	if fi, e := os.Lstat(filepath.Join(o.Base, "telemetry-off")); e == nil {
+		if !fi.Mode().IsRegular() {
+			return nil, "", nil // a marker NoteOff cannot keep current (a symlink) says nothing: send no usage
+		}
 		if next := fi.ModTime().UTC().Truncate(24*time.Hour).AddDate(0, 0, 1); next.After(floor) {
 			floor = next
 		}

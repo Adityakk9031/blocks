@@ -246,13 +246,13 @@ func TestRelativeBaseRefused(t *testing.T) {
 // decided_at bounds which days are sent, so only a real change of choice moves it.
 func TestDecidedAtMovesOnlyOnChange(t *testing.T) {
 	o := testOptions(t)
-	first, err := SaveChoice(o, true, false)
+	first, err := SaveChoice(o, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	o.Now = func() time.Time { return time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC) }
 	again, err := SaveChoice(o, true, true)
-	if err != nil || again.DecidedAt != first.DecidedAt || !again.Explicit || again.AnonymousID != first.AnonymousID {
+	if err != nil || again.DecidedAt != first.DecidedAt || again.AnonymousID != first.AnonymousID {
 		t.Fatalf("repeated on: %+v then %+v (%v)", first, again, err)
 	}
 	if off, err := SaveChoice(o, false, true); err != nil || off.DecidedAt == first.DecidedAt {
@@ -261,6 +261,16 @@ func TestDecidedAtMovesOnlyOnChange(t *testing.T) {
 	o.Now = func() time.Time { return time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC) }
 	if on, err := SaveChoice(o, true, true); err != nil || on.DecidedAt != "2026-10-12T12:00:00Z" || on.AnonymousID == first.AnonymousID {
 		t.Fatalf("on after off: %+v %v", on, err)
+	}
+	// A default turned into an explicit yes stops following the Caveman CLI, so it restarts too.
+	d := testOptions(t)
+	byDefault, err := SaveChoice(d, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Now = func() time.Time { return time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC) }
+	if explicit, err := SaveChoice(d, true, true); err != nil || explicit.DecidedAt != "2026-10-09T12:00:00Z" || explicit.AnonymousID != byDefault.AnonymousID {
+		t.Fatalf("default made explicit: %+v %v", explicit, err)
 	}
 }
 
@@ -420,8 +430,63 @@ func TestObserve(t *testing.T) {
 	if d := Observe(o); d.Sendable || off(o) {
 		t.Fatalf("CI: %+v, marked %v", d, off(o))
 	}
-	o.Getenv = func(k string) string { return map[string]string{"CAVEMAN_TELEMETRY": "0"}[k] }
+	// CI never hides what is behind it: a switch, or a choice that is off, still marks.
+	o.Getenv = func(k string) string { return map[string]string{"CI": "true", "CAVEMAN_TELEMETRY": "0"}[k] }
 	if d := Observe(o); d.Sendable || !off(o) {
-		t.Fatalf("switch: %+v, marked %v", d, off(o))
+		t.Fatalf("switch behind CI: %+v, marked %v", d, off(o))
+	}
+	for name, damage := range map[string]string{"damaged": "{", "off": `{"enabled":false,"explicit":true,"decided_at":"2026-10-01T00:00:00Z"}`} {
+		c := testOptions(t)
+		put(t, filepath.Join(c.Base, "telemetry.json"), damage)
+		c.Getenv = func(k string) string { return map[string]string{"CI": "true"}[k] }
+		if d := Observe(c); d.Sendable || !off(c) {
+			t.Fatalf("%s behind CI: %+v, marked %v", name, d, off(c))
+		}
+	}
+}
+
+// A marker that cannot be opened is replaced, and one that cannot be kept current stops all usage.
+func TestOffMarkerCannotGoStale(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root opens a read-only file")
+	}
+	o := testOptions(t)
+	usageFixture(t, o)
+	marker := filepath.Join(o.Base, "telemetry-off")
+	put(t, marker, "")
+	old := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(marker, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(marker, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	NoteOff(o.Base, time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC))
+	if fi, err := os.Stat(marker); err != nil || fi.ModTime().Before(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("read-only marker stayed stale: %v", err)
+	}
+	if events, _, err := rollup(o, onState(true)); err != nil || len(events) != 0 {
+		t.Fatalf("off day sent past a read-only marker: %+v %v", events, err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(o.Base, "elsewhere"), marker); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if events, through, err := rollup(o, onState(true)); err != nil || len(events) != 0 || through != "" {
+		t.Fatalf("usage sent past a symlinked marker: %+v %s %v", events, through, err)
+	}
+}
+
+// On a machine that has never used Blocks, finding telemetry off creates nothing: no state
+// directory, no marker. Otherwise `--help` would mark every install's first day.
+func TestObserveCreatesNothingOnAFreshMachine(t *testing.T) {
+	o := testOptions(t)
+	if d := Observe(o); d.Status != "not started" {
+		t.Fatalf("fresh: %+v", d)
+	}
+	if _, err := os.Stat(o.Base); !os.IsNotExist(err) {
+		t.Fatalf("state directory created by an observation: %v", err)
 	}
 }

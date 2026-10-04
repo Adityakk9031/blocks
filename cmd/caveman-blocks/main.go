@@ -30,10 +30,16 @@ func run() (code int) {
 		session = beginTelemetry(telemetryOptions(), true, os.Stderr, os.Args[1:])
 		attachTelemetry(root, session)
 	}
+	// A command that counts something (a run, a verify) marks an off day before it counts, so being
+	// killed cannot leave the day unmarked, and again when it ends, for one that ran past midnight.
+	// After beginTelemetry: the command that prints the disclosure must not mark its own day. The
+	// hook does its own marking (hookObserve).
+	observe := len(os.Args) > 1 && os.Args[1] != "hook"
+	if observe {
+		telemetry.Observe(telemetryOptions())
+	}
 	resolved, err := root.ExecuteC()
-	// Whatever this command counted (a run, a verify), it counted by now: if nothing may be sent,
-	// mark the day. The hook does the same after its answer (hookTelemetry); nothing here runs for it.
-	if len(os.Args) > 1 && os.Args[1] != "hook" {
+	if observe {
 		telemetry.Observe(telemetryOptions())
 	}
 	if session != nil {

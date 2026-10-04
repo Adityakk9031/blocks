@@ -17,7 +17,9 @@ import (
 	"github.com/caveman-ai/blocks/internal/repo"
 )
 
-// DisclosureVersion identifies the disclosure required before any event can be sent.
+// DisclosureVersion identifies the disclosure required before any event can be sent. Raising it
+// stops every install saved under a lower one from sending; the command lifecycle must then reprint
+// the disclosure and save the new version, which nothing does yet.
 const DisclosureVersion = 1
 
 // Disclosure is the documented, verbatim first-interactive-command notice.
@@ -154,9 +156,23 @@ func Decide(o Options) Decision {
 // It returns the decision.
 func Observe(o Options) Decision {
 	d := Decide(o)
-	if !d.Sendable && d.Reason != "CI" {
-		NoteOff(o.Base, o.now())
+	if d.Sendable {
+		return d
 	}
+	if d.Reason == "CI" {
+		// CI is reported first; look behind it, so it never hides a switch or a choice that is off.
+		behind := o
+		behind.Getenv = func(k string) string {
+			if k == "CI" {
+				return ""
+			}
+			return o.env(k)
+		}
+		if Decide(behind).Sendable {
+			return d
+		}
+	}
+	NoteOff(o.Base, o.now())
 	return d
 }
 
@@ -219,8 +235,9 @@ func SaveChoice(o Options, enabled, explicit bool) (State, error) {
 		s.AnonymousID, s.Linked = "", false // the Caveman CLI retired that ID; never keep using it
 	}
 	// decided_at is when telemetry last started; rollup sends nothing from before it. It stays put
-	// only when telemetry was already on (a repeated `on`): off for any reason, it restarts now.
-	if !(enabled && validUUID(s.AnonymousID) && Decide(o).Sendable) {
+	// only when the same choice is saved again while telemetry is on: off for any reason, or a
+	// default turned into an explicit yes (which stops following the Caveman CLI), it restarts now.
+	if !(enabled && s.Explicit == explicit && validUUID(s.AnonymousID) && Decide(o).Sendable) {
 		s.DecidedAt = o.now().Format(time.RFC3339)
 	}
 	s.Enabled, s.Explicit = enabled, explicit
