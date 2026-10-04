@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,17 +61,21 @@ func (o Options) now() time.Time {
 // that is not https (or plain http to this machine, for tests) yields "": nothing is sent, rather
 // than sent somewhere the override did not name or handed to curl as an option.
 func (o Options) Endpoint() string {
-	url := o.env("CAVEMAN_BLOCKS_TELEMETRY_URL")
-	if url == "" {
+	raw := o.env("CAVEMAN_BLOCKS_TELEMETRY_URL")
+	if raw == "" {
 		return DefaultURL
 	}
-	if strings.ContainsAny(url, " \t\r\n") {
+	// No whitespace, and none of curl's URL glob characters (curl also runs with --globoff).
+	if strings.ContainsAny(raw, " \t\r\n{}[]") {
 		return ""
 	}
-	for _, prefix := range []string{"https://", "http://127.0.0.1:", "http://127.0.0.1/", "http://localhost:", "http://localhost/"} {
-		if strings.HasPrefix(url, prefix) {
-			return url
-		}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil {
+		return "" // user:password@ can hide the real host behind a harmless-looking prefix
+	}
+	local := u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost"
+	if u.Scheme == "https" || u.Scheme == "http" && local {
+		return raw
 	}
 	return ""
 }
@@ -142,6 +147,17 @@ func Decide(o Options) Decision {
 	return d
 }
 
+// Observe decides and, when nothing may be sent right now, marks today off (NoteOff). Every process
+// that could count something calls it, so whatever a day's counts hold, a day on which telemetry was
+// seen off is never sent. It returns the decision.
+func Observe(o Options) Decision {
+	d := Decide(o)
+	if !d.Sendable {
+		NoteOff(o.Base, o.now())
+	}
+	return d
+}
+
 func switchOff(v string) bool {
 	if v == "" {
 		return false
@@ -185,7 +201,8 @@ func cavemanChoice(home string) cavemanTelemetry {
 	var c struct {
 		Telemetry cavemanTelemetry `json:"telemetry"`
 	}
-	b, err := readSafe(home, ".caveman-cloud/config.json")
+	// The Caveman CLI's own file, not our state: that CLI supports a symlinked config, so follow it.
+	b, err := readUser(home, ".caveman-cloud/config.json")
 	if err != nil || json.Unmarshal(b, &c) != nil || c.Telemetry.Enabled == nil || c.Telemetry.DecidedAt == "" {
 		return cavemanTelemetry{}
 	}
@@ -199,8 +216,9 @@ func SaveChoice(o Options, enabled, explicit bool) (State, error) {
 	if s.Linked && !linkHolds(o.Home, s) {
 		s.AnonymousID, s.Linked = "", false // the Caveman CLI retired that ID; never keep using it
 	}
-	// decided_at bounds what is sent (rollup), so a repeated `on` must not move it.
-	if !(enabled && s.Enabled && validUUID(s.AnonymousID)) {
+	// decided_at is when telemetry last started; rollup sends nothing from before it. It stays put
+	// only when telemetry was already on (a repeated `on`): off for any reason, it restarts now.
+	if !(enabled && validUUID(s.AnonymousID) && Decide(o).Sendable) {
 		s.DecidedAt = o.now().Format(time.RFC3339)
 	}
 	s.Enabled, s.Explicit = enabled, explicit

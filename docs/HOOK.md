@@ -90,11 +90,12 @@ script is cut at 16 KiB.
 
 One level up, `caveman-blocks/telemetry.json`, `telemetry-attempt` and `telemetry-sent` belong to
 [telemetry](TELEMETRY.md), as does `telemetry-off`. Once its answer is written on a pre-run call inside
-a repo, the hook looks at the mtime of `telemetry-attempt`: one `lstat` on a normal call. Once per 24
-hours it touches that marker, reads the saved choice and, only when a person has already seen the
-disclosure and telemetry is on, starts a detached `caveman-blocks telemetry flush`. When an environment
-off switch is set it marks the day in `telemetry-off` instead. The hook opens no connection and sends
-nothing itself.
+a repo, the hook reads the saved choice, one or two small files. When telemetry is off for any reason it
+marks the day in `telemetry-off`, so that day's counts are never sent. At most once per 24 hours, tracked
+by the mtime of `telemetry-attempt`, and only when a person has already seen the disclosure and telemetry
+is on, it starts a detached `caveman-blocks telemetry flush`. The hook opens no connection and sends
+nothing itself. These files are created `0600` and never through a symlink; `telemetry.json` is replaced
+by a temp file and a rename.
 
 Files are opened with `O_APPEND|O_NOFOLLOW` and created `0600`. A cloned repository therefore cannot
 point the hook at a file of its choosing: the hook only reads `.blocks/`, and it refuses to read through

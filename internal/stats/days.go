@@ -23,11 +23,16 @@ type Day struct {
 }
 
 // Days counts the events in [from, to) by UTC day, keyed by YYYY-MM-DD. A followed hint is credited
-// on the call's day; pairing spans midnight and reads hints up to a day before from, which also
-// bounds what a long history costs in memory. Missing files are empty; malformed lines are skipped;
-// symlinks are refused.
-func Days(stateDir string, from, to time.Time) (map[string]Day, error) {
-	events, err := readEvents(stateDir, from.AddDate(0, 0, -1), to)
+// on the call's day; pairing spans midnight and reads hints up to a day before from, but never one
+// before floor, so nothing older than floor can influence a count. The lookback also bounds what a
+// long history costs in memory. Missing files are empty; malformed lines are skipped; symlinks are
+// refused.
+func Days(stateDir string, floor, from, to time.Time) (map[string]Day, error) {
+	back := from.AddDate(0, 0, -1)
+	if floor.After(back) {
+		back = floor
+	}
+	events, err := readEvents(stateDir, back, to)
 	if err != nil {
 		return nil, err
 	}

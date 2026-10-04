@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/caveman-ai/blocks/internal/repo"
 	"github.com/caveman-ai/blocks/internal/telemetry"
 	"github.com/spf13/cobra"
 )
@@ -28,18 +26,16 @@ func main() { os.Exit(run()) }
 func run() (code int) {
 	root := newRoot()
 	var session *commandTelemetry
-	// The hook does its own telemetry work after its answer (hookTelemetry); nothing here runs for it.
-	hook := len(os.Args) > 1 && os.Args[1] == "hook"
-	if !hook && telemetry.EnvOff(os.Getenv) != "" {
-		if base, err := repo.StateBase(); err == nil {
-			telemetry.NoteOff(base, time.Now())
-		}
-	}
 	if telemetryInvocation(os.Args[1:]) && telemetryInteractive() {
 		session = beginTelemetry(telemetryOptions(), true, os.Stderr, os.Args[1:])
 		attachTelemetry(root, session)
 	}
 	resolved, err := root.ExecuteC()
+	// Whatever this command counted (a run, a verify), it counted by now: if nothing may be sent,
+	// mark the day. The hook does the same after its answer (hookTelemetry); nothing here runs for it.
+	if len(os.Args) > 1 && os.Args[1] != "hook" {
+		telemetry.Observe(telemetryOptions())
+	}
 	if session != nil {
 		defer func() { session.end(resolved, code) }()
 	}

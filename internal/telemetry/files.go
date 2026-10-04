@@ -44,6 +44,22 @@ func readSafe(base, name string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, 1<<20))
 }
 
+// readUser reads a file the user owns, following symlinks, when it is a regular file of at most 1 MiB.
+func readUser(base, name string) ([]byte, error) {
+	p, err := path(base, name)
+	if err != nil {
+		return nil, err
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() > 1<<20 {
+		return nil, fmt.Errorf("telemetry: %s is not a small regular file", name)
+	}
+	return os.ReadFile(p)
+}
+
 // writeSafe replaces base/name atomically (temp file and rename), never through a symlinked leaf.
 func writeSafe(base, name string, data []byte) error {
 	if _, err := path(base, name); err != nil {
@@ -73,9 +89,9 @@ func TouchAttempt(base string, now time.Time) bool {
 	return FlushDue(base, now) && touch(base, "telemetry-attempt", now)
 }
 
-// NoteOff records that an environment switch had telemetry off today. rollup never sends that day
-// or an earlier one, so usage counted while a switch was set is not sent once it is unset. Call it
-// only when EnvOff names a switch; it costs one lstat when today is already noted.
+// NoteOff records that telemetry was seen off today (Observe). rollup never sends that day or an
+// earlier one, so usage counted while it was off is not sent once it is on again. It costs one lstat
+// when today is already noted.
 func NoteOff(base string, now time.Time) {
 	p, err := path(base, "telemetry-off")
 	if err != nil {

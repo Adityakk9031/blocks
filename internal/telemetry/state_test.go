@@ -304,10 +304,11 @@ func TestRetiredSharedID(t *testing.T) {
 	if d := Decide(o); !d.Sendable {
 		t.Fatalf("held link: %+v", d)
 	}
-	for name, body := range map[string]string{
-		"opted out": `{"telemetry":{"enabled":false,"decidedAt":"2026-10-03T00:00:00Z","promptVersion":5}}`,
-		"new id":    `{"telemetry":{"enabled":true,"decidedAt":"2026-10-03T00:00:00Z","promptVersion":5,"anonymousId":"` + other + `"}}`,
+	for _, c := range [][2]string{ // in order: the re-link below needs the new ID in place
+		{"opted out", `{"telemetry":{"enabled":false,"decidedAt":"2026-10-03T00:00:00Z","promptVersion":5}}`},
+		{"new id", `{"telemetry":{"enabled":true,"decidedAt":"2026-10-03T00:00:00Z","promptVersion":5,"anonymousId":"` + other + `"}}`},
 	} {
+		name, body := c[0], c[1]
 		caveman(o, body)
 		if d := Decide(o); d.Sendable || d.Status != "not started" || !strings.Contains(d.Reason, "retired") {
 			t.Fatalf("%s: still sendable under the shared ID: %+v", name, d)
@@ -326,14 +327,21 @@ func TestRetiredSharedID(t *testing.T) {
 
 func TestEndpointOverride(t *testing.T) {
 	for url, want := range map[string]string{
-		"":                                    DefaultURL,
-		"https://example.invalid/x":           "https://example.invalid/x",
-		"http://127.0.0.1:54321/functions":    "http://127.0.0.1:54321/functions",
-		"http://localhost/x":                  "http://localhost/x",
-		"http://example.invalid/x":            "",
-		"-K/tmp/attacker.curlrc":              "",
-		"https://example.invalid/x -o /tmp/y": "",
-		"file:///etc/hosts":                   "",
+		"":                                      DefaultURL,
+		"https://example.invalid/x":             "https://example.invalid/x",
+		"http://127.0.0.1:54321/functions":      "http://127.0.0.1:54321/functions",
+		"http://localhost/x":                    "http://localhost/x",
+		"http://example.invalid/x":              "",
+		"-K/tmp/attacker.curlrc":                "",
+		"https://example.invalid/x -o /tmp/y":   "",
+		"file:///etc/hosts":                     "",
+		"http://localhost:@evil.example/x":      "", // userinfo: the real host is evil.example
+		"http://127.0.0.1:x@evil.example/":      "",
+		"https://user:pw@example.invalid/x":     "",
+		"https://{good.example,evil.example}/x": "", // curl URL globs
+		"https://a.example/[1-1000]":            "",
+		"http://localhost.evil.example/x":       "",
+		"https://":                              "",
 	} {
 		o := testOptions(t)
 		o.Getenv = func(k string) string {
@@ -355,5 +363,60 @@ func TestFutureMarkerIsDue(t *testing.T) {
 	}
 	if !TouchAttempt(o.Base, o.Now().AddDate(0, 3, 0)) || !FlushDue(o.Base, o.Now()) {
 		t.Fatal("a marker from the future stalled the daily attempt")
+	}
+}
+
+// The Caveman CLI's opt-out had Blocks off. A person's `telemetry on` afterwards starts telemetry
+// now: the days it was off are behind decided_at and are never sent.
+func TestOnAfterCavemanOptOutRestartsTheClock(t *testing.T) {
+	o := testOptions(t)
+	s := onState(false)
+	s.DecidedAt = "2026-09-20T00:00:00Z"
+	saved(t, o, s)
+	usageFixture(t, o)
+	put(t, filepath.Join(o.Home, ".caveman-cloud", "config.json"), `{"telemetry":{"enabled":false,"decidedAt":"2026-09-30T12:00:00Z","promptVersion":5}}`)
+	if d := Decide(o); d.Sendable || d.Reason != "the Caveman CLI opt-out" {
+		t.Fatalf("opt-out: %+v", d)
+	}
+	on, err := SaveChoice(o, true, true)
+	if err != nil || on.DecidedAt != "2026-10-04T12:00:00Z" || on.AnonymousID != testID {
+		t.Fatalf("on: %+v %v", on, err)
+	}
+	if events, through, err := rollup(o, on); err != nil || len(events) != 0 || through != "" {
+		t.Fatalf("off days sent after on: %+v %s %v", events, through, err)
+	}
+}
+
+// The Caveman CLI keeps its config behind a symlink for some users; its opt-out still counts.
+func TestSymlinkedCavemanConfig(t *testing.T) {
+	o := testOptions(t)
+	saved(t, o, onState(false))
+	target := filepath.Join(t.TempDir(), "dotfiles-caveman.json")
+	put(t, target, `{"telemetry":{"enabled":false,"decidedAt":"2026-10-02T00:00:00Z","promptVersion":5}}`)
+	if err := os.MkdirAll(filepath.Join(o.Home, ".caveman-cloud"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(o.Home, ".caveman-cloud", "config.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if d := Decide(o); d.Sendable || d.Reason != "the Caveman CLI opt-out" {
+		t.Fatalf("symlinked opt-out ignored: %+v", d)
+	}
+}
+
+// Observe marks the day exactly when nothing may be sent.
+func TestObserve(t *testing.T) {
+	off := func(o Options) bool {
+		_, err := os.Stat(filepath.Join(o.Base, "telemetry-off"))
+		return err == nil
+	}
+	o := testOptions(t)
+	saved(t, o, onState(true))
+	if d := Observe(o); !d.Sendable || off(o) {
+		t.Fatalf("on: %+v, marked %v", d, off(o))
+	}
+	o.Getenv = func(k string) string { return map[string]string{"CI": "true"}[k] }
+	if d := Observe(o); d.Sendable || !off(o) {
+		t.Fatalf("CI: %+v, marked %v", d, off(o))
 	}
 }

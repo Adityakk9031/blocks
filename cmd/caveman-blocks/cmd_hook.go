@@ -45,7 +45,7 @@ func hookCmd() *cobra.Command {
 			// The answer is written. The rest finishes after it or is abandoned when the watchdog
 			// exits: telemetry's once-a-day check, and a daily prune started by hookAnswer.
 			if base != "" {
-				hookTelemetry(base, time.Now())
+				hookTelemetry()
 			}
 			hookBackground.Wait()
 		},
@@ -94,15 +94,13 @@ func emptyAnswer(harness, phase string) []byte {
 }
 
 // hookTelemetry is the hook's whole part in telemetry (docs/TELEMETRY.md), run after the answer on
-// a pre-run call inside a repo: note an environment off switch for today, and at most once per 24
-// hours start the detached flush. With no switch set and a fresh marker it costs one lstat. It
-// opens no connection and can never fail the hook.
-func hookTelemetry(base string, now time.Time) {
+// a pre-run call inside a repo: read the saved choice, mark the day when nothing may be sent, and at
+// most once per 24 hours start the detached flush. It opens no connection and can never fail the hook.
+func hookTelemetry() {
 	defer func() { _ = recover() }()
-	if telemetry.EnvOff(os.Getenv) != "" {
-		telemetry.NoteOff(base, now)
-	}
-	if telemetry.TouchAttempt(base, now) && telemetry.Decide(telemetryOptions()).Sendable {
+	o := telemetryOptions()
+	d := telemetry.Observe(o)
+	if telemetry.TouchAttempt(o.Base, o.Now()) && d.Sendable {
 		spawnTelemetry(nil)
 	}
 }

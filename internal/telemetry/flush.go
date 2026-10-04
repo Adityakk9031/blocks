@@ -44,8 +44,8 @@ func Flush(o Options) {
 			return // curl treats a leading @ as a local file; never let one reach --data-binary
 		}
 		// -q, first: ~/.curlrc is not read, so nothing it holds (a header, credentials) rides along.
-		// --url: the destination can never be read as an option.
-		cmd := exec.Command(curl, "-q", "--silent", "--show-error", "--fail", "--max-time", "10", "--request", "POST",
+		// --url and --globoff: the destination is one URL, never an option or a pattern.
+		cmd := exec.Command(curl, "-q", "--globoff", "--silent", "--show-error", "--fail", "--max-time", "10", "--request", "POST",
 			"--header", "content-type: application/json", "--user-agent", "caveman-blocks/"+o.Version,
 			"--data-binary", string(payload), "--url", endpoint)
 		detach(cmd) // on Windows a console program started by a detached parent would open a window

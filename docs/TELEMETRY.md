@@ -32,9 +32,10 @@ are sent, because that list is public and fixed.
    terminal) has printed the disclosure line and saved the choice. Until then nothing is sent, and a
    command without a terminal (run by an agent, in a pipe, by the hook) never saves the default.
 
-Off covers what was counted while it was off. Usage from before the choice was saved, from before the
-Caveman CLI's latest decision when Blocks follows that CLI (control 6), or from a day on which any
-`caveman-blocks` process saw switch 1 to 4, is never sent later.
+Off covers what was counted while it was off. Every `caveman-blocks` process that finds telemetry
+off, the hook included, marks the day. A marked day is never sent, nor any day before it, even after
+telemetry is on again; a day is marked as a whole. Nothing from before telemetry last started is sent
+either.
 
 Only a person at a terminal can turn telemetry on: `telemetry on` refuses anywhere else. An agent or a
 script can turn it off. A `telemetry.json` that cannot be read counts as off and is never replaced by
@@ -62,8 +63,8 @@ reuses that CLI's install ID, so the two products can be counted as one install;
 then also says `shares the Caveman CLI install ID`. The link is decided when the ID is saved. If the
 Caveman CLI later turns its telemetry off or replaces its ID, Blocks stops using the shared ID at once:
 nothing is sent until the next interactive command saves a new ID and prints the disclosure again.
-`telemetry off` deletes the ID from disk and
-prints it once, because it is the only key to a deletion request.
+`telemetry off` deletes the ID from disk and prints it once, because it is the only key to a deletion
+request.
 
 This is pseudonymous, not anonymous: the ID links one install's events together, and the stored IP
 address shows where they came from.
@@ -135,15 +136,15 @@ oldest first, at most 7 days back, and never activity from a time telemetry was 
 
 - After an interactive command, the CLI starts a detached `caveman-blocks telemetry flush` and exits.
   That process sends the command's events plus any unsent complete days.
-- The hook, once it has written its answer on a pre-run call inside a repo, checks one marker file
-  and, at most once per 24 hours, starts the same detached process. The hook itself opens no
-  connection.
+- The hook, once it has written its answer on a pre-run call inside a repo, reads the saved choice,
+  marks the day when telemetry is off, and at most once per 24 hours starts the same detached
+  process. The hook itself opens no connection.
 - The binary contains no network code. `telemetry flush` hands the JSON to the system `curl`
-  (`curl -q --max-time 10`; `-q` keeps `~/.curlrc` out of it); a machine without `curl` sends nothing.
-  A failed send is dropped and never fails or slows a command; unsent days are retried on the next
-  flush.
+  (`curl -q --globoff --max-time 10`; `-q` keeps `~/.curlrc` out of it); a machine without `curl`
+  sends nothing. A failed send is dropped and never fails or slows a command; unsent days are retried
+  on the next flush.
 - `CAVEMAN_BLOCKS_TELEMETRY_URL` overrides the destination, for testing. It must be an `https://` URL,
-  or `http://` to `127.0.0.1` or `localhost`; with anything else nothing is sent.
+  or `http://` to `127.0.0.1` or `localhost`, with no `user@` part; with anything else nothing is sent.
 
 Files, all under `$XDG_STATE_HOME/caveman-blocks/` (default `~/.local/state/caveman-blocks/`):
 
@@ -151,7 +152,7 @@ Files, all under `$XDG_STATE_HOME/caveman-blocks/` (default `~/.local/state/cave
 |---|---|
 | `telemetry.json` | the saved choice, install ID, install channel. Written by an interactive command, or by `telemetry off` |
 | `telemetry-attempt` | empty; its mtime is the hook's last daily check |
-| `telemetry-off` | empty; its mtime is the last day an environment switch had telemetry off |
+| `telemetry-off` | empty; its mtime is the last day a process found telemetry off |
 | `telemetry-sent` | the last UTC day whose `daily_usage` was delivered |
 
 ## Where it goes, how long it stays

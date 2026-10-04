@@ -314,3 +314,20 @@ func TestRunWiring(t *testing.T) {
 		t.Fatalf("usage error event: %+v", e)
 	}
 }
+
+// A command that ran while telemetry was off marks the day, so what it counted is never sent.
+func TestRunMarksOffDay(t *testing.T) {
+	o, _, calls := cliTelemetry(t)
+	if _, err := telemetry.SaveChoice(o, true, true); err != nil {
+		t.Fatal(err)
+	}
+	o.Getenv = func(k string) string { return map[string]string{"DO_NOT_TRACK": "1"}[k] }
+	telemetryOptions = func() telemetry.Options { return o }
+	oldInteractive, oldArgs := telemetryInteractive, os.Args
+	t.Cleanup(func() { telemetryInteractive, os.Args = oldInteractive, oldArgs })
+	telemetryInteractive = func() bool { return false }
+	os.Args = []string{"caveman-blocks", "version"}
+	if code := run(); code != 0 || !marked(o) || len(*calls) != 0 {
+		t.Fatalf("exit %d, marked %v, sent %+v", code, marked(o), *calls)
+	}
+}
