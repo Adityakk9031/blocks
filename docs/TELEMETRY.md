@@ -35,7 +35,8 @@ are sent, because that list is public and fixed.
 Off covers what was counted while it was off. Every `caveman-blocks` process that finds telemetry
 off, the hook included, marks the day. A marked day is never sent, nor any day before it, even after
 telemetry is on again; a day is marked as a whole. Nothing from before telemetry last started is sent
-either.
+either. `CI` (control 4) is the one exception: it stops that process from sending and from enrolling,
+and marks nothing, because some agent harnesses set it for every command they run.
 
 Only a person at a terminal can turn telemetry on: `telemetry on` refuses anywhere else. An agent or a
 script can turn it off. A `telemetry.json` that cannot be read counts as off and is never replaced by

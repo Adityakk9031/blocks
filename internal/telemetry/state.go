@@ -147,12 +147,14 @@ func Decide(o Options) Decision {
 	return d
 }
 
-// Observe decides and, when nothing may be sent right now, marks today off (NoteOff). Every process
-// that could count something calls it, so whatever a day's counts hold, a day on which telemetry was
-// seen off is never sent. It returns the decision.
+// Observe decides and, when a switch or a choice has telemetry off, marks today off (NoteOff). Every
+// process that could count something calls it, so a day on which telemetry was seen off is never
+// sent, whatever its counts hold. CI is the exception: it keeps this process from sending and from
+// enrolling, but it is not the person's choice (some agent harnesses export it), so it marks nothing.
+// It returns the decision.
 func Observe(o Options) Decision {
 	d := Decide(o)
-	if !d.Sendable {
+	if !d.Sendable && d.Reason != "CI" {
 		NoteOff(o.Base, o.now())
 	}
 	return d

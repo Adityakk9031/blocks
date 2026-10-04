@@ -415,8 +415,13 @@ func TestObserve(t *testing.T) {
 	if d := Observe(o); !d.Sendable || off(o) {
 		t.Fatalf("on: %+v, marked %v", d, off(o))
 	}
+	// CI keeps this process from sending but is not the person's choice: the day stays unmarked.
 	o.Getenv = func(k string) string { return map[string]string{"CI": "true"}[k] }
-	if d := Observe(o); d.Sendable || !off(o) {
+	if d := Observe(o); d.Sendable || off(o) {
 		t.Fatalf("CI: %+v, marked %v", d, off(o))
+	}
+	o.Getenv = func(k string) string { return map[string]string{"CAVEMAN_TELEMETRY": "0"}[k] }
+	if d := Observe(o); d.Sendable || !off(o) {
+		t.Fatalf("switch: %+v, marked %v", d, off(o))
 	}
 }
