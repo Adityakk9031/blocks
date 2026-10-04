@@ -1,7 +1,8 @@
 # Architecture
 
 One static binary, `caveman-blocks`, used three ways: as a CLI by people and agents, as a hook by the
-agent harness, and as a CI step. No daemon, no service, no model calls, no network in v0.
+agent harness, and as a CI step. No daemon, no service, no model calls, no network code in the binary.
+Opt-out usage counts leave through the system `curl` ([TELEMETRY.md](TELEMETRY.md)).
 
 ```
                  ┌───────────────────────────────────────────────────────────────┐
@@ -42,6 +43,7 @@ agent harness, and as a CI step. No daemon, no service, no model calls, no netwo
 | `promote` | Rank sightings, render the brief, propose provenance; `retire` | no |
 | `runner` | `run`: effects gate from committed config, exec, cap, spill | no |
 | `stats` | Append and summarize events | no |
+| `telemetry` | Saved choice, wire events, daily rollup of `stats.jsonl`, flush through the system `curl` | no |
 | `repo` | Repo root, `.blocks/`, `config.toml`, state dir, default branch, instruction files | no |
 
 Pure packages take values and return values, hold every decision, and are tested with golden tables.
@@ -57,6 +59,9 @@ mid-session. Which files get what is in [HOOK.md](HOOK.md#instruction-files).
 [HOOK.md](HOOK.md#engine): find `.blocks/` or return; dedupe; extract an inline script; detect edits;
 hint when the body matches a block or dumps a structured file; capture a sighting for scripts of ten or
 more lines; suggest promotion when shapes repeat. The hook never denies and never rewrites a command.
+After its answer is written, and at most once per 24 hours, the hook starts a detached
+`caveman-blocks telemetry flush` when telemetry is on; the hook itself opens no connection
+([TELEMETRY.md](TELEMETRY.md)).
 
 **Block call.** `caveman-blocks run <name> --param v` loads the header, reads `allow_effects` from the
 committed `config.toml` at `HEAD`, refuses `network` and `external` unless allowed, rejects `path`
@@ -102,10 +107,12 @@ Nothing reads the lock in v0; it exists so phase 2's `diff` and `update` have pr
   stamp lines, so `verify` does not alter it).
 - `INDEX.md`: generated; identical to the `AGENTS.md` section.
 - State dir layout, sighting schema and scrub list: [HOOK.md](HOOK.md#state-directory).
-- `stats.jsonl`: one object per event: `ts`, `session`, `kind` (`script`, `hint`, `promote-hint`,
+- `stats.jsonl`: one object per event: `ts`, `session`, `harness` (hook events only), `kind` (`script`, `hint`, `promote-hint`,
   `call`, `run`, `verify`), `block`, `fp`, `ok`, for `script` events `lines`, and for `run` events
   `bytes_full`, `bytes_returned`, `exit`. The hook writes `script`, `hint`, `promote-hint` and `call`; the runner writes `run`; `verify`
   writes `verify`. "Hint followed" is a `call` of the hinted block after a `hint` in the same session.
+- Telemetry files, one level above the per-repo state dirs: `telemetry.json`, `telemetry-attempt`,
+  `telemetry-sent`. See [TELEMETRY.md](TELEMETRY.md#when-it-is-sent-and-how).
 
 ## Install and distribution
 
@@ -136,4 +143,6 @@ index cap is also a latency cap.
 - `verify --check` in CI reads `allow_effects` from the base branch, so a fork pull request runs only
   the effects the base branch already allows, inside the CI container, under `on: pull_request` with no
   secrets.
-- Nothing is sent anywhere. No telemetry.
+- Only the usage counts listed in [TELEMETRY.md](TELEMETRY.md) leave the machine: opt-out, through the
+  system `curl`, started by a detached process. Scripts, fingerprints, paths, repo names and the names of
+  user blocks never do; the event type has no field that could carry them.

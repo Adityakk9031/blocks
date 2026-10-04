@@ -13,7 +13,8 @@
 | CI | GitHub Actions: `test`, `lint`, `e2e`, `bench-hook`, `blocks-test`, `blocks-verify` on macOS and Linux. No Windows job in v0; the binary cross-compiles but is untested there | Hook budget enforced in CI |
 | Docs | Markdown in `docs/`, decision records in `docs/decisions/` | Rationale next to code |
 
-Not used: a model API, embeddings, tree-sitter, a database, a daemon, telemetry.
+Not used: a model API, embeddings, tree-sitter, a database, a daemon, a network library (`net/http` stays
+out of the binary; telemetry hands its payload to the system `curl`, decision 0011).
 
 ## Layout
 
@@ -39,6 +40,7 @@ caveman-blocks/
     promote/                 brief rendering, candidate ranking, retire
     runner/                  caveman-blocks run: effects gate, path confinement, exec, cap, spill
     stats/                   append and summarize events
+    telemetry/               saved choice, wire events, daily rollup of stats.jsonl, flush through the system curl
     export/                  SKILL.md rendering for export   (pure; golden test)
     repo/                    repo root, .blocks/, config.toml at HEAD, state dir, default branch, instruction files
   blocks/                    first-party blocks, one file each, plus fixtures/<name>/ and tests/; README.md is the registry table
@@ -58,9 +60,10 @@ caveman-blocks/
 - `blockfile`, `index`, `hook` and the pure parts of `capture` and `scan` import nothing from the impure
   packages. They take values and return values. Every behavior change starts as a new golden row.
 - Adapters are the only code that knows a harness's field names. The engine sees `hook.Input`.
-- No package makes network calls in v0. When `diff` and `update` land, `registry` is the only one allowed to.
-- No package reads environment variables except `repo` (for `HOME` and `XDG_*`) and the adapters (for
-  harness-specific paths).
+- No package opens a network connection. `telemetry` hands one JSON payload to the system `curl`
+  ([TELEMETRY.md](TELEMETRY.md)). When `diff` and `update` land, `registry` is the only one allowed network code.
+- No package reads environment variables except `repo` (for `HOME` and `XDG_*`), the adapters (for
+  harness-specific paths) and `telemetry` (its off switches, through an injected getter).
 - Errors are values with a stable code (`F001` and friends for lint, `H001` for hook internals) so the
   CLI output and the docs can name them.
 
@@ -82,6 +85,7 @@ caveman-blocks/
 | `export` | Write `SKILL.md` wrappers into `.claude/skills/` and `.agents/skills/` |
 | `stats [--since 7d]` | Summarize counted events |
 | `hook --harness <claude\|codex\|cursor\|generic> [--phase pre\|post]` | Entry point the harness calls; `generic` speaks the protocol in INTEGRATION.md; always exits 0 |
+| `telemetry status\|on\|off` | Show, enable or disable usage counts; see [TELEMETRY.md](TELEMETRY.md). A hidden `telemetry flush` is the detached sender |
 | `doctor` | Report binary and hook copy versions, hook configs and trust notes, Python, parent `CLAUDE.md`, CI workflow, sync state, indexed blocks |
 | `version [--json]` | Print the version; `--json` adds `capabilities` (`hooks_status_json`) |
 

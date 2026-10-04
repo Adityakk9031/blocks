@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/caveman-ai/blocks/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -22,9 +23,18 @@ Exit codes: 0 success; 1 failure (lint finding, failed or stale verify, stale sy
 func main() { os.Exit(run()) }
 
 // run executes the CLI and returns the process exit code.
-func run() int {
+func run() (code int) {
 	root := newRoot()
-	err := root.Execute()
+	var session *commandTelemetry
+	// Keep the hook path entirely out of begin/end telemetry, including terminal and state checks.
+	if telemetryInvocation(os.Args[1:]) && telemetry.Interactive() && !telemetry.InAgent(os.Getenv) {
+		session = beginTelemetry(telemetryOptions(), true, os.Stderr, os.Args[1:])
+		attachTelemetry(root, session)
+	}
+	resolved, err := root.ExecuteC()
+	if session != nil {
+		defer func() { session.end(resolved, code) }()
+	}
 	var ex exitError
 	switch {
 	case err == nil:
@@ -89,7 +99,7 @@ func newRoot() *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(
 		initCmd(), hooksCmd(), addCmd(), runCmd(), lintCmd(), verifyCmd(), syncCmd(), scanCmd(),
-		promoteCmd(), retireCmd(), exportCmd(), statsCmd(), hookCmd(), doctorCmd(),
+		promoteCmd(), retireCmd(), exportCmd(), statsCmd(), hookCmd(), doctorCmd(), telemetryCmd(),
 		versionCmd(),
 	)
 	return root

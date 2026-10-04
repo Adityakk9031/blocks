@@ -60,6 +60,7 @@ func hookRepo(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(root, ".blocks"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(hookBackground.Wait)
 	return root
 }
 

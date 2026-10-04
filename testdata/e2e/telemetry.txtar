@@ -1,0 +1,63 @@
+# Explicit telemetry controls work without a TTY. All delivery stays in this fake curl.
+[windows] skip 'fake curl is a POSIX shell fixture'
+env HOME=$WORK/home XDG_STATE_HOME=$WORK/state
+env CI= DO_NOT_TRACK= CAVEMAN_BLOCKS_TELEMETRY= CAVEMAN_TELEMETRY=
+env CAVEMAN_BLOCKS_TELEMETRY_EVENTS= CAVEMAN_BLOCKS_TELEMETRY_URL=https://example.invalid/telemetry-test
+
+exec caveman-blocks telemetry status
+stdout '^not started · the default'
+stdout '^install ID: none$'
+stdout '^shared with the Caveman CLI: no$'
+! exists state/caveman-blocks/telemetry.json
+
+exec caveman-blocks telemetry on
+! stdout .
+stderr '^usage counts on · .* · shares the Caveman CLI install ID$'
+exec caveman-blocks telemetry status
+stdout '^on · your choice$'
+stdout '^install ID: 12345678-1234-4123-8123-123456789abc$'
+stdout '^shared with the Caveman CLI: yes$'
+stdout '^endpoint: https://example.invalid/telemetry-test$'
+
+exec chmod +x bin/curl
+env PATH=$WORK/bin:$PATH CURL_PAYLOAD=$WORK/payload.json
+env CAVEMAN_BLOCKS_TELEMETRY_EVENTS='[{"schema":"blocks/v1","event":"command_run","ts":"2026-10-03T12:00:00Z","anonymous_id":"12345678-1234-4123-8123-123456789abc","cli_version":"1.2.3","os":"linux","arch":"amd64","install_channel":"direct","linked":true,"command":"stats","duration_ms":1,"exit_class":"ok"}]'
+exec caveman-blocks telemetry flush
+! stdout .
+! stderr .
+cmp payload.json expected.json
+# The choice was saved today, so no complete day exists yet: no usage, no watermark.
+! exists state/caveman-blocks/telemetry-sent
+
+rm payload.json
+env DO_NOT_TRACK=1
+exec caveman-blocks telemetry flush
+! exists payload.json
+exec caveman-blocks telemetry status
+stdout '^off · DO_NOT_TRACK$'
+env DO_NOT_TRACK=
+
+exec caveman-blocks telemetry off
+stderr '^telemetry off · old install ID 12345678-1234-4123-8123-123456789abc · to delete what it sent: https://github.com/caveman-ai/blocks/blob/main/docs/TELEMETRY.md#delete-what-was-sent$'
+! grep anonymous_id state/caveman-blocks/telemetry.json
+exec caveman-blocks telemetry status
+stdout '^off · your choice$'
+stdout '^install ID: none$'
+exec caveman-blocks telemetry off
+! stderr .
+exec caveman-blocks telemetry flush
+! exists payload.json
+
+-- home/.caveman-cloud/config.json --
+{"telemetry":{"enabled":true,"decidedAt":"2026-10-01T00:00:00Z","promptVersion":1,"anonymousId":"12345678-1234-4123-8123-123456789ABC"}}
+-- bin/curl --
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--data-binary" ]; then
+    shift
+    printf '%s\n' "$1" > "$CURL_PAYLOAD"
+  fi
+  shift
+done
+-- expected.json --
+[{"schema":"blocks/v1","event":"command_run","ts":"2026-10-03T12:00:00Z","anonymous_id":"12345678-1234-4123-8123-123456789abc","cli_version":"1.2.3","os":"linux","arch":"amd64","install_channel":"direct","linked":true,"command":"stats","duration_ms":1,"exit_class":"ok"}]

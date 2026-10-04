@@ -147,13 +147,9 @@ func Git(root string, args ...string) (string, error) {
 // $XDG_STATE_HOME (default ~/.local/state) /caveman-blocks/<repo-id>. repo-id is the first 16 hex of
 // SHA-256 of the absolute git common dir, so worktrees share state, or of the absolute root outside git.
 func StateDir(root string) (string, error) {
-	base := os.Getenv("XDG_STATE_HOME")
-	if !filepath.IsAbs(base) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(home, ".local", "state")
+	base, err := StateBase()
+	if err != nil {
+		return "", err
 	}
 	key, err := Git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil || key == "" {
@@ -162,13 +158,26 @@ func StateDir(root string) (string, error) {
 		}
 	}
 	sum := sha256.Sum256([]byte(key))
-	dir := filepath.Join(base, "caveman-blocks", hex.EncodeToString(sum[:])[:16])
+	dir := filepath.Join(base, hex.EncodeToString(sum[:])[:16])
 	for _, sub := range []string{"candidates", "out", "cache"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o700); err != nil {
 			return "", err
 		}
 	}
 	return dir, nil
+}
+
+// StateBase returns the machine-wide state path without creating it. Relative XDG paths are ignored.
+func StateBase() (string, error) {
+	base := os.Getenv("XDG_STATE_HOME")
+	if !filepath.IsAbs(base) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(base, "caveman-blocks"), nil
 }
 
 // DefaultBranch names the repository's default branch: origin/HEAD's target, else

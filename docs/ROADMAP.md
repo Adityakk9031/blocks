@@ -16,6 +16,7 @@ without asking a question that the docs should have answered.
   `wait-for`, `grep-defs`, `http-json`, `replace-in-file`
 - Hook engine with golden decision tables; hint and capture only; rule 1 under 5 ms
 - State dir outside the repo; scrub list with golden tests
+- Opt-out usage telemetry, counts only, so the gates below can be read across installs (decision 0011)
 - Release: GitHub releases, Homebrew tap, `curl | sh`, `npx caveman-blocks`
 
 **Gate 1, dogfood on two repositories for two weeks** (candidates: the `caveman` repo and this one; a repo
@@ -28,7 +29,7 @@ hints ignored on most sessions, hook latency complaints, any report of the hook 
 
 - Copilot CLI and Gemini CLI adapters
 - Headless promotion through an agent's non-interactive mode; `promote = "pr"` policy
-- `diff` and `update` against newer registry versions, using the lock file; first network code
+- `diff` and `update` against newer registry versions, using the lock file; first network code in the binary
 - A deny for exact repeats via a `replaces` key, only if dogfood shows hints being ignored
 - More first-party blocks driven by the scan data of design partners
 - Windows: PowerShell extraction in the hook

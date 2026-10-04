@@ -88,6 +88,12 @@ than 14 days are pruned by that daily run, rule 9 reads only candidate files wri
 window and only the newest 1 MiB of each, and a stored
 script is cut at 16 KiB.
 
+One level up, `caveman-blocks/telemetry.json`, `telemetry-attempt` and `telemetry-sent` belong to
+[telemetry](TELEMETRY.md). On a pre-run call inside a repo the hook looks at the mtime of
+`telemetry-attempt`. At most once per 24 hours, and only when a person has already seen the disclosure
+and telemetry is on, it starts a detached `caveman-blocks telemetry flush` after its answer is written.
+The hook opens no connection, sends nothing itself, and with telemetry off this costs one `lstat`.
+
 Files are opened with `O_APPEND|O_NOFOLLOW` and created `0600`. A cloned repository therefore cannot
 point the hook at a file of its choosing: the hook only reads `.blocks/`, and it refuses to read through
 a symlink there. The scripts stored as sightings are scrubbed first with a golden-tested list: URL

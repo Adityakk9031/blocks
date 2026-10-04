@@ -17,6 +17,7 @@ import (
 	"github.com/caveman-ai/blocks/internal/promote"
 	"github.com/caveman-ai/blocks/internal/repo"
 	"github.com/caveman-ai/blocks/internal/stats"
+	"github.com/caveman-ai/blocks/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +40,9 @@ func hookCmd() *cobra.Command {
 				os.Exit(0)
 			}()
 			stdin, _ := io.ReadAll(io.LimitReader(os.Stdin, hookMaxInput))
-			answer(hookAnswer(harness, phase, stdin, time.Now))
+			answered := make(chan struct{})
+			answer(hookAnswer(harness, phase, stdin, time.Now, answered))
+			close(answered)
 			// A daily prune started by hookAnswer finishes after the answer, or is abandoned when
 			// the watchdog exits.
 			hookBackground.Wait()
@@ -90,7 +93,7 @@ func emptyAnswer(harness, phase string) []byte {
 
 // hookAnswer turns one harness payload into the harness's answer. Every failure, panics included,
 // becomes the dialect's empty answer; internal errors go to <stateDir>/hook.log.
-func hookAnswer(harness, phase string, stdin []byte, now func() time.Time) (out []byte) {
+func hookAnswer(harness, phase string, stdin []byte, now func() time.Time, answered ...<-chan struct{}) (out []byte) {
 	d, ok := dialects[harness]
 	if !ok {
 		return []byte("{}\n")
@@ -135,12 +138,25 @@ func hookAnswer(harness, phase string, stdin []byte, now func() time.Time) (out 
 				repo.Prune(stateDir, now())
 			}()
 		}
+		base := filepath.Dir(stateDir)
+		if telemetry.FlushDue(base, now()) {
+			hookBackground.Add(1)
+			go func() {
+				defer hookBackground.Done()
+				if len(answered) > 0 {
+					<-answered[0] // production flush starts only after the answer has been written
+				}
+				if telemetry.TouchAttempt(base, now()) && telemetry.Decide(telemetryOptions()).Sendable {
+					spawnTelemetry(nil)
+				}
+			}()
+		}
 	}
 	deps := hook.DefaultDeps(stateDir)
 	deps.Log = func(err error) { hookLog(stateDir, err, now()) }
 	dec := hook.Decide(cfg, hook.Input{Phase: req.Phase, Command: req.Command, Cwd: req.Cwd, Session: req.Session, CallID: req.CallID}, deps)
 	for _, e := range dec.Events {
-		if err := stats.Append(stateDir, stats.Event{TS: e.TS, Session: e.Session, Kind: e.Kind, Block: e.Block, FP: e.FP, OK: e.OK, Lines: e.Lines}); err != nil {
+		if err := stats.Append(stateDir, stats.Event{TS: e.TS, Session: e.Session, Harness: harness, Kind: e.Kind, Block: e.Block, FP: e.FP, OK: e.OK, Lines: e.Lines}); err != nil {
 			hookLog(stateDir, err, now())
 		}
 	}

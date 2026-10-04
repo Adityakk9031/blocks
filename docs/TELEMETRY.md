@@ -42,13 +42,17 @@ The disclosure line, printed once on stderr before the first interactive command
 usage counts on · commands, hints shown and followed, block runs, a random install ID, OS and your IP address · never scripts, file paths, repo names or names of blocks you wrote · this is what keeps Blocks free · off: caveman-blocks telemetry off · https://github.com/caveman-ai/blocks/blob/main/docs/TELEMETRY.md
 ```
 
-`help`, `version`, `telemetry …` and the hook never print it and never save the default.
+`help`, `version`, `telemetry status|off` and the hook never print it and never save the default.
+`telemetry on` prints it. A command run by a known agent harness (`CLAUDECODE`, `CODEX_SANDBOX`,
+`CODEX_THREAD_ID`, `CURSOR_AGENT`, `GEMINI_CLI`, `OPENCODE` or `AGENT` is set) is never interactive, even
+when the harness gives it a terminal: the line has to reach a person.
 
 ## Install ID
 
 A random UUID, saved with the choice. If the Caveman CLI is installed with its telemetry on, Blocks
 reuses that CLI's install ID, so the two products can be counted as one install; the disclosure line
-then also says `shares the Caveman CLI install ID`. `telemetry off` deletes the ID from disk and
+then also says `shares the Caveman CLI install ID`. The link is decided once, when the ID is saved.
+`telemetry off` deletes the ID from disk and
 prints it once, because it is the only key to a deletion request.
 
 This is pseudonymous, not anonymous: the ID links one install's events together, and the stored IP
@@ -78,7 +82,7 @@ Every event:
 | Field | Type | Values |
 |---|---|---|
 | `command` | string | `init`, `hooks`, `add`, `run`, `lint`, `verify`, `sync`, `scan`, `promote`, `retire`, `export`, `stats`, `doctor`, `telemetry`, `unknown` |
-| `subcommand` | string | empty, or `install`, `uninstall`, `status`, `on`, `off` |
+| `subcommand` | string | empty; `install`, `uninstall` or `status` with `hooks`; `on`, `off` or `status` with `telemetry` |
 | `block` | string | for `add` and `run`: the block name if it is a first-party name, else absent |
 | `duration_ms` | int | |
 | `exit_class` | string | `ok`, `error` |
@@ -94,8 +98,8 @@ Every event:
 | `scan_top_count` | int | size of the largest shape |
 
 `daily_usage`: one per install per UTC day with activity, summed over every repo on the machine, read
-from the `stats.jsonl` files the hook and runner already write. Only complete past days are sent, at
-most 7 days back.
+from the `stats.jsonl` files the hook and runner already write. Only complete past days are sent,
+oldest first, at most 7 days back, and never a day before the one on which the choice was saved.
 
 | Field | Type | Meaning |
 |---|---|---|

@@ -23,7 +23,8 @@ make blocks-lint       # ruff over blocks/; skips when neither uvx nor ruff is i
   `ruff check` clean with defaults (`make blocks-lint`; not run in CI, so it is on the contributor), carry a
   working `example`, and ship their fixtures under `blocks/fixtures/<name>/`, which `add` copies into user
   repos and CI verifies here.
-- No model calls, no network calls in v0, no telemetry.
+- No model calls. No network code in the binary. Telemetry sends counts only; a new event field starts as a
+  change to the contract in `docs/TELEMETRY.md`, and a free-text field is never added (decision 0011).
 - Measured numbers are labelled measured. Nothing prints a saving in dollars or percent.
 - Commits: conventional, scoped (`feat(hook): …`, `fix(registry): …`). Pull requests to `main`.
 - `AGENTS.md` is the single instruction file in this repo. Claude Code reads it when no `CLAUDE.md` exists, and this repo dogfoods its own `sync`, so there is no `CLAUDE.md`.
@@ -35,5 +36,7 @@ make blocks-lint       # ruff over blocks/; skips when neither uvx nor ruff is i
 3. Run `make blocks-verify`, `make blocks-lint` and `make blocks-test`; add a positive and a negative
    `matches` sample to `MATCH_SAMPLES` in `blocks/tests/test_blocks.py`.
 4. Add one line to the registry table in `blocks/README.md`.
-5. Open a pull request. Review checks the header, the `matches` patterns against real scripts from the
+5. Add the name to the first-party allowlist of the telemetry receiver (`supabase/functions/blocks-telemetry/ingest.ts`
+   in the caveman repo), or usage events drop it.
+6. Open a pull request. Review checks the header, the `matches` patterns against real scripts from the
    scan corpus, and that the output is an answer, not data.
