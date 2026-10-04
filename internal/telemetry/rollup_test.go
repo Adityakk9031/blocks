@@ -3,6 +3,7 @@ package telemetry
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,10 +97,11 @@ func TestRollupNeverBeforeDecision(t *testing.T) {
 	o := testOptions(t)
 	usageFixture(t, o)
 	s := onState(false)
-	s.DecidedAt = "2026-10-02T15:00:00Z"
+	s.DecidedAt = "2026-10-02T01:30:00Z" // between that day's 01:00 call and 02:00 script
 	events, through, err := rollup(o, s)
-	if err != nil || through != "2026-10-03" || len(events) != 1 || events[0].Day != "2026-10-02" {
-		t.Fatalf("decided on the 2nd: %+v %s %v", events, through, err)
+	if err != nil || through != "2026-10-03" || len(events) != 1 || events[0].Day != "2026-10-02" ||
+		events[0].Scripts != 2 || events[0].Calls != 0 {
+		t.Fatalf("decided on the 2nd at 01:30: %+v %s %v", events, through, err)
 	}
 	s.DecidedAt = "2026-10-04T09:00:00Z" // today: nothing is complete yet
 	if events, through, err = rollup(o, s); err != nil || len(events) != 0 || through != "" {
@@ -108,5 +110,67 @@ func TestRollupNeverBeforeDecision(t *testing.T) {
 	s.DecidedAt = ""
 	if events, through, err = rollup(o, s); err != nil || len(events) != 0 || through != "" {
 		t.Fatalf("no decision date: %+v %s %v", events, through, err)
+	}
+}
+
+// A day on which any process saw an environment off switch is never sent, nor any day before it.
+func TestRollupSkipsOffDays(t *testing.T) {
+	o := testOptions(t)
+	usageFixture(t, o)
+	NoteOff(o.Base, time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC))
+	events, through, err := rollup(o, onState(true))
+	if err != nil || through != "2026-10-03" || len(events) != 1 || events[0].Day != "2026-10-02" {
+		t.Fatalf("off on the 1st: %+v %s %v", events, through, err)
+	}
+	NoteOff(o.Base, time.Date(2026, 10, 1, 23, 0, 0, 0, time.UTC)) // already noted: one lstat, no change
+	if fi, _ := os.Stat(filepath.Join(o.Base, "telemetry-off")); fi.ModTime().UTC().Hour() != 10 {
+		t.Fatal("same-day note rewrote the marker")
+	}
+	NoteOff(o.Base, time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC))
+	if events, through, err = rollup(o, onState(true)); err != nil || len(events) != 0 || through != "" {
+		t.Fatalf("off yesterday: %+v %s %v", events, through, err)
+	}
+}
+
+// A choice that follows the Caveman CLI's was off until that CLI's latest decision; an explicit
+// Blocks choice does not depend on it.
+func TestRollupFollowsCavemanDecision(t *testing.T) {
+	o := testOptions(t)
+	usageFixture(t, o)
+	put(t, filepath.Join(o.Home, ".caveman-cloud", "config.json"),
+		`{"telemetry":{"enabled":true,"decidedAt":"2026-10-02T01:30:00.000Z","promptVersion":5,"anonymousId":"`+testID+`"}}`)
+	events, _, err := rollup(o, onState(false))
+	if err != nil || len(events) != 1 || events[0].Day != "2026-10-02" || events[0].Calls != 0 {
+		t.Fatalf("default choice ignores the Caveman CLI's decision time: %+v %v", events, err)
+	}
+	if events, _, err = rollup(o, onState(true)); err != nil || len(events) != 2 {
+		t.Fatalf("explicit choice bounded by the Caveman CLI: %+v %v", events, err)
+	}
+}
+
+func TestRollupSevenDayCapAndFutureWatermark(t *testing.T) {
+	o := testOptions(t)
+	usageFixture(t, o) // holds a run on 2026-09-25, nine days before "today"
+	s := onState(true)
+	s.DecidedAt = "2026-09-01T00:00:00Z"
+	events, _, err := rollup(o, s)
+	if err != nil || len(events) != 2 || events[0].Day != "2026-10-01" {
+		t.Fatalf("seven-day cap: %+v %v", events, err)
+	}
+	// The clock was ahead once: the watermark is ignored instead of silencing usage for months.
+	put(t, filepath.Join(o.Base, "telemetry-sent"), "2027-03-01\n")
+	if events, through, err := rollup(o, s); err != nil || len(events) != 2 || through != "2026-10-03" {
+		t.Fatalf("future watermark: %+v %s %v", events, through, err)
+	}
+}
+
+// One repo whose stats cannot be read is left out; it does not stop every other repo's usage.
+func TestRollupSkipsUnreadableRepo(t *testing.T) {
+	o := testOptions(t)
+	usageFixture(t, o)
+	put(t, filepath.Join(o.Base, "broken-repo", "stats.jsonl"), strings.Repeat("x", 1100*1024)+"\n")
+	events, through, err := rollup(o, onState(true))
+	if err != nil || through != "2026-10-03" || len(events) != 2 || events[0].ReposActive != 2 {
+		t.Fatalf("unreadable repo: %+v %s %v", events, through, err)
 	}
 }

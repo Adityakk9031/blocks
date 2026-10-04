@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"encoding"
 	"encoding/json"
 	"os"
 	"reflect"
@@ -11,10 +12,25 @@ import (
 // TestWireFieldGuard requires a named validator for every string and every map key, recursively.
 // Interfaces, pointers, slices and other free-form fields are rejected even if currently unused.
 func TestWireFieldGuard(t *testing.T) {
+	// A custom marshaler can emit any text whatever the Go type looks like, so none is allowed.
+	marshalers := []reflect.Type{reflect.TypeFor[json.Marshaler](), reflect.TypeFor[encoding.TextMarshaler]()}
+	plain := func(name string, typ reflect.Type) {
+		for _, m := range marshalers {
+			if typ.Implements(m) || reflect.PointerTo(typ).Implements(m) {
+				t.Errorf("%s (%s) has a custom marshaler", name, typ)
+			}
+		}
+	}
 	var walk func(reflect.Type)
 	walk = func(typ reflect.Type) {
+		plain(typ.Name(), typ)
 		for i := 0; i < typ.NumField(); i++ {
 			f := typ.Field(i)
+			plain(f.Name, f.Type)
+			if f.Type.Kind() == reflect.Map {
+				plain(f.Name+" key", f.Type.Key())
+				plain(f.Name+" value", f.Type.Elem())
+			}
 			switch f.Type.Kind() {
 			case reflect.Struct:
 				walk(f.Type)
@@ -111,13 +127,28 @@ func TestExtraEventsStrict(t *testing.T) {
 	b, _ := json.Marshal(commandEvent(o))
 	good := string(b)
 	bad := strings.TrimSuffix(good, "}") + `,"script":"private"}`
-	if got := extraEvents("["+good+","+bad+"]", o.FirstParty); len(got) != 1 {
+	if got := extraEvents("["+good+","+bad+"]", o, onState(true)); len(got) != 1 {
 		t.Fatalf("strict individual events: %+v", got)
 	}
 	for _, raw := range []string{"[" + good + "] trailing", good, "null", "{}", "[null]"} {
-		if len(extraEvents(raw, o.FirstParty)) != 0 {
+		if len(extraEvents(raw, o, onState(true))) != 0 {
 			t.Errorf("accepted malformed array %s", raw)
 		}
+	}
+}
+
+// Whatever the handed-over event claims about who sent it, it leaves under this install's identity.
+func TestExtraEventsRebuildIdentity(t *testing.T) {
+	o := testOptions(t)
+	forged := commandEvent(o)
+	forged.AnonymousID, forged.CLIVersion, forged.OS, forged.Arch, forged.InstallChannel, forged.Linked =
+		"deadbeef-dead-4ead-8ead-deadbeefdead", "acme-internal.customer-x", "plan9", "mips", "brew", true
+	b, _ := json.Marshal([]Event{forged})
+	got := extraEvents(string(b), o, onState(true))
+	want := NewEvent(o, onState(true), "command_run")
+	if len(got) != 1 || got[0].AnonymousID != testID || got[0].CLIVersion != "1.2.3" || got[0].OS != want.OS ||
+		got[0].Arch != want.Arch || got[0].InstallChannel != "direct" || got[0].Linked || got[0].Command != "stats" {
+		t.Fatalf("identity not rebuilt: %+v", got)
 	}
 }
 

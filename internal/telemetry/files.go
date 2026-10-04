@@ -55,20 +55,41 @@ func writeSafe(base, name string, data []byte) error {
 	return repo.WriteFileSafe(base, name, data, 0o600)
 }
 
-// FlushDue checks only the marker's mtime, including when telemetry is off.
+// FlushDue checks only the marker's mtime, including when telemetry is off. A marker from the
+// future (the clock was ahead once) is due, so it cannot stall the daily attempt.
 func FlushDue(base string, now time.Time) bool {
 	fi, err := os.Lstat(filepath.Join(base, "telemetry-attempt"))
-	return err != nil || now.Sub(fi.ModTime()) >= 24*time.Hour
+	if err != nil {
+		return true
+	}
+	age := now.Sub(fi.ModTime())
+	return age < 0 || age >= 24*time.Hour
 }
 
 // TouchAttempt marks a due attempt before any decision read or spawn; false means skip the attempt.
 // ponytail: like PruneDue, the second check narrows but does not lock out simultaneous processes;
 // the receiver stores one row per install and day, so a duplicate attempt costs one request.
 func TouchAttempt(base string, now time.Time) bool {
-	if !FlushDue(base, now) {
-		return false
+	return FlushDue(base, now) && touch(base, "telemetry-attempt", now)
+}
+
+// NoteOff records that an environment switch had telemetry off today. rollup never sends that day
+// or an earlier one, so usage counted while a switch was set is not sent once it is unset. Call it
+// only when EnvOff names a switch; it costs one lstat when today is already noted.
+func NoteOff(base string, now time.Time) {
+	p, err := path(base, "telemetry-off")
+	if err != nil {
+		return
 	}
-	p, err := path(base, "telemetry-attempt")
+	if fi, err := os.Lstat(p); err == nil && !fi.ModTime().Before(now.UTC().Truncate(24*time.Hour)) {
+		return
+	}
+	touch(base, "telemetry-off", now)
+}
+
+// touch creates base/name if needed, never through a symlinked leaf, and sets its mtime to now.
+func touch(base, name string, now time.Time) bool {
+	p, err := path(base, name)
 	if err != nil {
 		return false
 	}

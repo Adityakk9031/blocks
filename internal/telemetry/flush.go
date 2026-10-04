@@ -12,10 +12,11 @@ import (
 // It never saves telemetry.json, so a concurrent off cannot be overwritten by an old on decision.
 func Flush(o Options) {
 	d := Decide(o)
-	if !d.Sendable {
+	endpoint := o.Endpoint()
+	if !d.Sendable || endpoint == "" {
 		return
 	}
-	events := extraEvents(o.env("CAVEMAN_BLOCKS_TELEMETRY_EVENTS"), o.FirstParty)
+	events := extraEvents(o.env("CAVEMAN_BLOCKS_TELEMETRY_EVENTS"), o, d.State)
 	daily, through, err := rollup(o, d.State)
 	if err != nil {
 		through = "" // commands can still be sent; incomplete days must be retried
@@ -42,9 +43,12 @@ func Flush(o Options) {
 		if err != nil || len(payload) == 0 || payload[0] != '[' {
 			return // curl treats a leading @ as a local file; never let one reach --data-binary
 		}
-		cmd := exec.Command(curl, "--silent", "--show-error", "--fail", "--max-time", "10", "--request", "POST",
+		// -q, first: ~/.curlrc is not read, so nothing it holds (a header, credentials) rides along.
+		// --url: the destination can never be read as an option.
+		cmd := exec.Command(curl, "-q", "--silent", "--show-error", "--fail", "--max-time", "10", "--request", "POST",
 			"--header", "content-type: application/json", "--user-agent", "caveman-blocks/"+o.Version,
-			"--data-binary", string(payload), o.Endpoint())
+			"--data-binary", string(payload), "--url", endpoint)
+		detach(cmd) // on Windows a console program started by a detached parent would open a window
 		cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 		if cmd.Run() != nil && end > dailyStart {
 			dailyOK = false
@@ -62,7 +66,10 @@ func advance(o Options, through string) {
 	}
 }
 
-func extraEvents(raw string, firstParty []string) []Event {
+// extraEvents decodes the events a command handed over. The parent's word is taken only for what
+// happened: who sends it is rebuilt from the choice saved now, so an event never goes out under an
+// install ID, version or platform other than this install's.
+func extraEvents(raw string, o Options, s State) []Event {
 	var items []json.RawMessage
 	dec := json.NewDecoder(strings.NewReader(raw))
 	if dec.Decode(&items) != nil || dec.Decode(new(any)) != io.EOF {
@@ -73,7 +80,13 @@ func extraEvents(raw string, firstParty []string) []Event {
 		var event Event
 		dec := json.NewDecoder(bytes.NewReader(item))
 		dec.DisallowUnknownFields()
-		if dec.Decode(&event) == nil && event.Validate(firstParty) == nil {
+		if dec.Decode(&event) != nil {
+			continue
+		}
+		own := NewEvent(o, s, event.Event)
+		event.Schema, event.AnonymousID, event.CLIVersion, event.OS, event.Arch, event.InstallChannel, event.Linked =
+			own.Schema, own.AnonymousID, own.CLIVersion, own.OS, own.Arch, own.InstallChannel, own.Linked
+		if event.Validate(o.FirstParty) == nil {
 			events = append(events, event)
 		}
 	}

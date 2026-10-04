@@ -17,15 +17,15 @@ type telemetryContextKey struct{}
 
 // commandTelemetry lives only for an eligible interactive invocation.
 type commandTelemetry struct {
-	options  telemetry.Options
-	started  time.Time
-	firstRun bool
-	scan     telemetry.ScanCounts
-	argv     []string
+	options telemetry.Options
+	started time.Time
+	startID string // the install ID before this command; a different one at the end means first_run
+	scan    telemetry.ScanCounts
+	argv    []string
 }
 
 func telemetryInvocation(argv []string) bool {
-	if len(argv) == 0 || slices.Contains([]string{"hook", "help", "version", "--version"}, argv[0]) ||
+	if len(argv) == 0 || slices.Contains([]string{"hook", "help", "version", "--version", "-v"}, argv[0]) ||
 		len(argv) > 1 && argv[0] == "telemetry" && argv[1] == "flush" {
 		return false
 	}
@@ -41,16 +41,16 @@ func beginTelemetry(o telemetry.Options, interactive bool, stderr io.Writer, arg
 	if !interactive || !telemetryInvocation(argv) {
 		return nil
 	}
-	t := &commandTelemetry{options: o, started: o.Now(), argv: argv}
 	d := telemetry.Decide(o)
+	t := &commandTelemetry{options: o, started: o.Now(), argv: argv, startID: d.State.AnonymousID}
 	if d.EnvOff && d.Saved && d.State.Enabled {
 		if _, err := telemetry.SaveChoice(o, false, true); err == nil && d.State.AnonymousID != "" {
 			fmt.Fprintln(stderr, telemetry.OffNotice(d.State.AnonymousID))
 		}
 	} else if argv[0] != "telemetry" && d.Status == "not started" {
-		if s, err := telemetry.SaveChoice(o, true, false); err == nil {
+		// Explicit survives: a yes given with `telemetry on` stays one when a retired shared ID is replaced.
+		if s, err := telemetry.SaveChoice(o, true, d.State.Explicit); err == nil {
 			fmt.Fprintln(stderr, disclosure(s))
-			t.firstRun = true
 		}
 	}
 	return t
@@ -98,7 +98,7 @@ func (t *commandTelemetry) end(c *cobra.Command, exit int) {
 		e.ScanCounts = t.scan
 	}
 	var events []telemetry.Event
-	if t.firstRun {
+	if d.State.AnonymousID != t.startID {
 		events = append(events, telemetry.NewEvent(t.options, d.State, "first_run"))
 	}
 	if e.Validate(t.options.FirstParty) == nil {
@@ -126,7 +126,7 @@ func recordScanTelemetry(c *cobra.Command, rep scan.Report, window time.Duration
 	if t == nil {
 		return
 	}
-	t.scan = telemetry.ScanCounts{ScanWindowDays: min(int(window/(24*time.Hour)), 3660), ScanCommands: rep.Commands,
+	t.scan = telemetry.ScanCounts{ScanWindowDays: max(0, min(int(window/(24*time.Hour)), 3660)), ScanCommands: rep.Commands,
 		ScanScripts: rep.Scripts, ScanEdits: rep.Edits, ScanShapes: len(rep.Groups)}
 	for _, group := range rep.Groups {
 		if group.Count >= 2 {

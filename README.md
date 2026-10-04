@@ -154,7 +154,7 @@ Not yet: Python only, no sandbox, and the Codex and Cursor hooks haven't run in 
 
 ## Privacy, license, cite
 
-Blocks is free. It stays free because we can show it gets used, so the CLI sends usage counts by default: commands run, hints shown and followed, block runs, a random install ID, OS and IP address. Never your scripts, file paths, repo names or the names of blocks you wrote. Turn it off for good with `caveman-blocks telemetry off` or `DO_NOT_TRACK=1`. [Everything that is sent](docs/TELEMETRY.md).
+Blocks is free. It stays free because we can show it gets used, so the CLI sends usage counts by default: commands run, hints shown and followed, block runs, a random install ID, OS and IP address. Never your scripts, file paths, repo names or the names of blocks you wrote. Turn it off for good with `caveman-blocks telemetry off`; `DO_NOT_TRACK=1` is honored too. [Everything that is sent](docs/TELEMETRY.md).
 
 No model calls. Blocks stay in your repo; captured scripts are scrubbed of secrets and kept outside it. [Trust boundary](docs/ARCHITECTURE.md).
 

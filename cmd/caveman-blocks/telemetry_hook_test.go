@@ -13,28 +13,38 @@ import (
 	"github.com/caveman-ai/blocks/internal/telemetry"
 )
 
-func TestHookTelemetryCadenceAndHarness(t *testing.T) {
-	root := hookRepo(t)
-	o, _, calls := cliTelemetry(t)
+// hookTelemetryFixture is a repo, isolated state, and a saved yes under that state.
+func hookTelemetryFixture(t *testing.T) (root string, o telemetry.Options, calls *[][]telemetry.Event) {
+	t.Helper()
+	root = hookRepo(t)
+	for _, k := range []string{"DO_NOT_TRACK", "CAVEMAN_BLOCKS_TELEMETRY", "CAVEMAN_TELEMETRY", "CI"} {
+		t.Setenv(k, "")
+	}
+	o, _, calls = cliTelemetry(t)
 	var err error
-	o.Base, err = repo.StateBase()
-	if err != nil {
+	if o.Base, err = repo.StateBase(); err != nil {
 		t.Fatal(err)
 	}
 	telemetryOptions = func() telemetry.Options { return o }
 	if _, err := telemetry.SaveChoice(o, true, true); err != nil {
 		t.Fatal(err)
 	}
+	return root, o, calls
+}
+
+func TestHookTelemetryCadenceAndHarness(t *testing.T) {
+	root, o, calls := hookTelemetryFixture(t)
+	now := o.Now()
 	invoke := func(harness, session string) {
 		t.Helper()
-		out := hookAnswer(harness, "", hookPayload(session, root, "caveman-blocks run json-peek"), o.Now)
-		hookBackground.Wait()
-		if string(out) != "{}\n" {
-			t.Fatalf("telemetry changed answer: %s", out)
+		out, base := hookAnswer(harness, "", hookPayload(session, root, "caveman-blocks run json-peek"), o.Now)
+		if string(out) != "{}\n" || base != o.Base {
+			t.Fatalf("answer %s, base %q", out, base)
 		}
+		hookTelemetry(base, now)
 	}
 	invoke("codex", "s1")
-	if len(*calls) != 1 || len((*calls)[0]) != 0 || telemetry.FlushDue(o.Base, o.Now()) {
+	if len(*calls) != 1 || len((*calls)[0]) != 0 || telemetry.FlushDue(o.Base, now) {
 		t.Fatalf("first daily attempt: %+v", *calls)
 	}
 	// A warm marker does not even resolve telemetry options.
@@ -61,52 +71,48 @@ func TestHookTelemetryCadenceAndHarness(t *testing.T) {
 	if _, err := telemetry.SaveChoice(o, false, true); err != nil {
 		t.Fatal(err)
 	}
-	later := o.Now().Add(25 * time.Hour)
-	o.Now = func() time.Time { return later }
+	now = now.Add(25 * time.Hour)
 	invoke("claude", "s3")
-	if len(*calls) != 1 || telemetry.FlushDue(o.Base, later) {
+	if len(*calls) != 1 || telemetry.FlushDue(o.Base, now) {
 		t.Fatal("off hook spawned or failed to touch marker")
 	}
 }
 
+// Outside a repo and on a post-run call the hook does no telemetry work at all.
 func TestHookTelemetryAbsentOutsideAndPost(t *testing.T) {
 	root := hookRepo(t)
-	o, _, calls := cliTelemetry(t)
-	telemetryOptions = func() telemetry.Options { t.Error("excluded hook resolved telemetry"); return o }
-	hookAnswer("claude", "", hookPayload("outside", t.TempDir(), "ls"), o.Now)
-	post := strings.ReplaceAll(string(hookPayload("post", root, "ls")), "PreToolUse", "PostToolUse")
-	hookAnswer("claude", "post", []byte(post), o.Now)
-	hookBackground.Wait()
-	base, err := repo.StateBase()
-	if err != nil {
-		t.Fatal(err)
+	if _, base := hookAnswer("claude", "", hookPayload("outside", t.TempDir(), "ls"), time.Now); base != "" {
+		t.Fatalf("outside a repo: base %q", base)
 	}
-	if _, err := os.Stat(filepath.Join(base, "telemetry-attempt")); !os.IsNotExist(err) || len(*calls) != 0 {
-		t.Fatal("outside/post hook did telemetry")
+	post := strings.ReplaceAll(string(hookPayload("post", root, "ls")), "PreToolUse", "PostToolUse")
+	if _, base := hookAnswer("claude", "post", []byte(post), time.Now); base != "" {
+		t.Fatalf("post phase: base %q", base)
+	}
+	if _, base := hookAnswer("no-such-harness", "", hookPayload("x", root, "ls"), time.Now); base != "" {
+		t.Fatalf("unknown harness: base %q", base)
 	}
 }
 
-func TestHookTelemetryWaitsForAnswer(t *testing.T) {
-	root := hookRepo(t)
-	o, _, calls := cliTelemetry(t)
-	var err error
-	o.Base, err = repo.StateBase()
-	if err != nil {
-		t.Fatal(err)
-	}
+// A hook that runs with an off switch notes the day and starts nothing, and that day's usage is
+// never sent once the switch is gone (internal/telemetry TestRollupSkipsOffDays).
+func TestHookTelemetryNotesEnvOff(t *testing.T) {
+	_, o, calls := hookTelemetryFixture(t)
+	t.Setenv("DO_NOT_TRACK", "1")
+	o.Getenv = os.Getenv
 	telemetryOptions = func() telemetry.Options { return o }
-	if _, err := telemetry.SaveChoice(o, true, true); err != nil {
-		t.Fatal(err)
+	hookTelemetry(o.Base, o.Now())
+	fi, err := os.Stat(filepath.Join(o.Base, "telemetry-off"))
+	if err != nil || !fi.ModTime().Equal(o.Now()) {
+		t.Fatalf("off day not noted: %v", err)
 	}
-	answered := make(chan struct{})
-	hookAnswer("claude", "", hookPayload("before-answer", root, "ls"), o.Now, answered)
-	if _, err := os.Stat(filepath.Join(o.Base, "telemetry-attempt")); !os.IsNotExist(err) {
-		close(answered)
-		t.Fatal("telemetry touched its marker before the answer")
+	if len(*calls) != 0 {
+		t.Fatal("flush started under DO_NOT_TRACK")
 	}
-	close(answered)
-	hookBackground.Wait()
-	if len(*calls) != 1 {
-		t.Fatal("telemetry did not start after the answer")
-	}
+}
+
+// Nothing in the telemetry step may take the hook down: a non-zero exit denies the tool call.
+func TestHookTelemetryNeverPanics(t *testing.T) {
+	_, o, _ := hookTelemetryFixture(t)
+	telemetryOptions = func() telemetry.Options { panic("telemetry state exploded") }
+	hookTelemetry(o.Base, o.Now())
 }

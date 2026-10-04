@@ -69,10 +69,13 @@ func TestFlush(t *testing.T) {
 				t.Fatalf("payload counts: %+v", batches)
 			}
 			for _, wanted := range []string{"--silent\n--show-error\n--fail\n--max-time\n10\n--request\nPOST\n", "--header\ncontent-type: application/json\n",
-				"--user-agent\ncaveman-blocks/1.2.3\n", "https://telemetry.example.invalid/fixture\n"} {
+				"--user-agent\ncaveman-blocks/1.2.3\n", "--url\nhttps://telemetry.example.invalid/fixture\n--end--\n"} {
 				if !strings.Contains(argv, wanted) {
 					t.Errorf("curl argv missing %q", wanted)
 				}
+			}
+			if !strings.HasPrefix(argv, "-q\n") {
+				t.Errorf("-q must be curl's first argument, or ~/.curlrc is applied: %q", argv[:20])
 			}
 			for _, forbidden := range []string{"acme-secret-report", "secret-session", "second-secret", "wrong-secret", "private-fingerprint", "private-repo", "today-private", "future-private", "old-private", o.Base, "script text"} {
 				if strings.Contains(argv, forbidden) {
@@ -92,7 +95,7 @@ func TestFlush(t *testing.T) {
 }
 
 func TestFlushNotSendable(t *testing.T) {
-	for _, choice := range []string{"absent", "off", "old-disclosure", "invalid-id", "env-off", "CI"} {
+	for _, choice := range []string{"absent", "off", "old-disclosure", "invalid-id", "env-off", "CI", "bad-url"} {
 		t.Run(choice, func(t *testing.T) {
 			o := testOptions(t)
 			s := onState(true)
@@ -112,6 +115,9 @@ func TestFlushNotSendable(t *testing.T) {
 			o.Getenv = func(key string) string {
 				if choice == "env-off" && key == "DO_NOT_TRACK" || choice == "CI" && key == "CI" {
 					return "1"
+				}
+				if choice == "bad-url" && key == "CAVEMAN_BLOCKS_TELEMETRY_URL" {
+					return "-K/tmp/attacker.curlrc"
 				}
 				return ""
 			}

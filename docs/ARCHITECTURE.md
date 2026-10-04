@@ -112,7 +112,7 @@ Nothing reads the lock in v0; it exists so phase 2's `diff` and `update` have pr
   `bytes_full`, `bytes_returned`, `exit`. The hook writes `script`, `hint`, `promote-hint` and `call`; the runner writes `run`; `verify`
   writes `verify`. "Hint followed" is a `call` of the hinted block after a `hint` in the same session.
 - Telemetry files, one level above the per-repo state dirs: `telemetry.json`, `telemetry-attempt`,
-  `telemetry-sent`. See [TELEMETRY.md](TELEMETRY.md#when-it-is-sent-and-how).
+  `telemetry-off`, `telemetry-sent`. See [TELEMETRY.md](TELEMETRY.md#when-it-is-sent-and-how).
 
 ## Install and distribution
 

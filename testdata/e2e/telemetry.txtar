@@ -1,4 +1,4 @@
-# Explicit telemetry controls work without a TTY. All delivery stays in this fake curl.
+# Telemetry controls without a terminal. All delivery stays in this fake curl.
 [windows] skip 'fake curl is a POSIX shell fixture'
 env HOME=$WORK/home XDG_STATE_HOME=$WORK/state
 env CI= DO_NOT_TRACK= CAVEMAN_BLOCKS_TELEMETRY= CAVEMAN_TELEMETRY=
@@ -10,32 +10,49 @@ stdout '^install ID: none$'
 stdout '^shared with the Caveman CLI: no$'
 ! exists state/caveman-blocks/telemetry.json
 
-exec caveman-blocks telemetry on
-! stdout .
-stderr '^usage counts on · .* · shares the Caveman CLI install ID$'
+# A yes needs a person at a terminal, and there is none here.
+! exec caveman-blocks telemetry on
+stderr 'telemetry on needs a person at a terminal'
+! exists state/caveman-blocks/telemetry.json
+
+# A person said yes earlier (the fixture), sharing the Caveman CLI's install ID.
+mkdir state/caveman-blocks
+cp choice.json state/caveman-blocks/telemetry.json
 exec caveman-blocks telemetry status
 stdout '^on · your choice$'
 stdout '^install ID: 12345678-1234-4123-8123-123456789abc$'
 stdout '^shared with the Caveman CLI: yes$'
 stdout '^endpoint: https://example.invalid/telemetry-test$'
 
+# A handed-over event leaves under the saved install ID, whatever it claims about its sender.
 exec chmod +x bin/curl
 env PATH=$WORK/bin:$PATH CURL_PAYLOAD=$WORK/payload.json
-env CAVEMAN_BLOCKS_TELEMETRY_EVENTS='[{"schema":"blocks/v1","event":"command_run","ts":"2026-10-03T12:00:00Z","anonymous_id":"12345678-1234-4123-8123-123456789abc","cli_version":"1.2.3","os":"linux","arch":"amd64","install_channel":"direct","linked":true,"command":"stats","duration_ms":1,"exit_class":"ok"}]'
+env CAVEMAN_BLOCKS_TELEMETRY_EVENTS='[{"schema":"blocks/v1","event":"command_run","ts":"2026-10-03T12:00:00Z","anonymous_id":"deadbeef-dead-4ead-8ead-deadbeefdead","cli_version":"9.9.9","os":"plan9","arch":"mips","install_channel":"brew","linked":false,"command":"stats","duration_ms":1,"exit_class":"ok"}]'
 exec caveman-blocks telemetry flush
 ! stdout .
 ! stderr .
-cmp payload.json expected.json
-# The choice was saved today, so no complete day exists yet: no usage, no watermark.
-! exists state/caveman-blocks/telemetry-sent
+grep '"anonymous_id":"12345678-1234-4123-8123-123456789abc"' payload.json
+grep '"install_channel":"direct","linked":true,"command":"stats","duration_ms":1,"exit_class":"ok"' payload.json
+! grep 'deadbeef|plan9|9\.9\.9' payload.json
+exists state/caveman-blocks/telemetry-sent
 
+# An off switch sends nothing and marks the day, so its usage is not sent later either.
 rm payload.json
 env DO_NOT_TRACK=1
 exec caveman-blocks telemetry flush
 ! exists payload.json
+exists state/caveman-blocks/telemetry-off
 exec caveman-blocks telemetry status
 stdout '^off · DO_NOT_TRACK$'
 env DO_NOT_TRACK=
+
+# An override that is not an https URL is never handed to curl.
+env CAVEMAN_BLOCKS_TELEMETRY_URL=-K/tmp/attacker.curlrc
+exec caveman-blocks telemetry flush
+! exists payload.json
+exec caveman-blocks telemetry status
+stdout '^endpoint: none'
+env CAVEMAN_BLOCKS_TELEMETRY_URL=https://example.invalid/telemetry-test
 
 exec caveman-blocks telemetry off
 stderr '^telemetry off · old install ID 12345678-1234-4123-8123-123456789abc · to delete what it sent: https://github.com/caveman-ai/blocks/blob/main/docs/TELEMETRY.md#delete-what-was-sent$'
@@ -48,6 +65,8 @@ exec caveman-blocks telemetry off
 exec caveman-blocks telemetry flush
 ! exists payload.json
 
+-- choice.json --
+{"enabled":true,"explicit":true,"decided_at":"2026-10-01T00:00:00Z","disclosure":1,"anonymous_id":"12345678-1234-4123-8123-123456789abc","linked":true,"install_channel":"direct"}
 -- home/.caveman-cloud/config.json --
 {"telemetry":{"enabled":true,"decidedAt":"2026-10-01T00:00:00Z","promptVersion":1,"anonymousId":"12345678-1234-4123-8123-123456789ABC"}}
 -- bin/curl --
@@ -59,5 +78,3 @@ while [ "$#" -gt 0 ]; do
   fi
   shift
 done
--- expected.json --
-[{"schema":"blocks/v1","event":"command_run","ts":"2026-10-03T12:00:00Z","anonymous_id":"12345678-1234-4123-8123-123456789abc","cli_version":"1.2.3","os":"linux","arch":"amd64","install_channel":"direct","linked":true,"command":"stats","duration_ms":1,"exit_class":"ok"}]

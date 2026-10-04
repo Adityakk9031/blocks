@@ -21,9 +21,10 @@ block is arbitrary code the same way a Makefile is. The hook never runs a block;
 
 On by default, opt-out, counts only: commands run, hints shown and followed, block runs, a random
 install ID, OS and the sender's IP address. Never scripts, file paths, repo names or the names of blocks
-you wrote. `caveman-blocks telemetry off` or `DO_NOT_TRACK=1` turns it off for good; it is always off in
-CI, and nothing is sent before an interactive command has printed the disclosure. The payload is handed
-to the system `curl` by a detached process, so the hook never opens a connection.
+you wrote. `caveman-blocks telemetry off` turns it off for good and `DO_NOT_TRACK=1` is honored; it is
+always off in CI. Nothing is sent before a person at a terminal has been shown the disclosure, only a
+person at a terminal can turn it on, and usage counted while it was off is never sent later. The payload
+is handed to the system `curl` by a detached process, so the hook never opens a connection.
 
 Every field, every control, where it is stored, retention and how to have it deleted:
 [docs/TELEMETRY.md](docs/TELEMETRY.md). An event that carries anything that page does not list is a

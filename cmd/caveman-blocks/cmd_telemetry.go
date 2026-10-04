@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
 
 	"github.com/caveman-ai/blocks/blocks"
 	"github.com/caveman-ai/blocks/internal/registry"
@@ -11,6 +13,10 @@ import (
 
 // These seams keep tests from re-executing the test binary or reading a person's telemetry choice.
 var spawnTelemetry = telemetry.Spawn
+
+// telemetryInteractive reports a person at a terminal: real terminals on stdin and stderr, and no
+// agent harness in between. Only such a run may save a yes.
+var telemetryInteractive = func() bool { return telemetry.Interactive() && !telemetry.InAgent(os.Getenv) }
 var telemetryOptions = func() telemetry.Options {
 	names, _ := (registry.Registry{FS: blocks.FS}).List()
 	return telemetry.System(version, names)
@@ -30,12 +36,20 @@ func telemetryCmd() *cobra.Command {
 			if d.State.Linked && d.State.AnonymousID != "" {
 				shared = "yes"
 			}
+			endpoint := o.Endpoint()
+			if endpoint == "" {
+				endpoint = "none; CAVEMAN_BLOCKS_TELEMETRY_URL is not an https URL, so nothing is sent"
+			}
 			fmt.Fprintf(c.OutOrStdout(), "%s · %s\ninstall ID: %s\nshared with the Caveman CLI: %s\nendpoint: %s\n",
-				d.Status, d.Reason, id, shared, o.Endpoint())
+				d.Status, d.Reason, id, shared, endpoint)
 		},
 	}, &cobra.Command{
 		Use: "on", Short: "Save an explicit choice to send usage counts.", Args: args(cobra.NoArgs),
 		RunE: func(c *cobra.Command, _ []string) error {
+			// A yes has to come from a person: an agent or a script can turn telemetry off, never on.
+			if !telemetryInteractive() {
+				return usageError{errors.New("telemetry on needs a person at a terminal; run it yourself, so you see what is sent")}
+			}
 			s, err := telemetry.SaveChoice(telemetryOptions(), true, true)
 			if err != nil {
 				return err

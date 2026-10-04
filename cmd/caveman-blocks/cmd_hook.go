@@ -40,11 +40,13 @@ func hookCmd() *cobra.Command {
 				os.Exit(0)
 			}()
 			stdin, _ := io.ReadAll(io.LimitReader(os.Stdin, hookMaxInput))
-			answered := make(chan struct{})
-			answer(hookAnswer(harness, phase, stdin, time.Now, answered))
-			close(answered)
-			// A daily prune started by hookAnswer finishes after the answer, or is abandoned when
-			// the watchdog exits.
+			b, base := hookAnswer(harness, phase, stdin, time.Now)
+			answer(b)
+			// The answer is written. The rest finishes after it or is abandoned when the watchdog
+			// exits: telemetry's once-a-day check, and a daily prune started by hookAnswer.
+			if base != "" {
+				hookTelemetry(base, time.Now())
+			}
 			hookBackground.Wait()
 		},
 	}
@@ -91,12 +93,27 @@ func emptyAnswer(harness, phase string) []byte {
 	return render(d, protocol.Allow(""), phase)
 }
 
+// hookTelemetry is the hook's whole part in telemetry (docs/TELEMETRY.md), run after the answer on
+// a pre-run call inside a repo: note an environment off switch for today, and at most once per 24
+// hours start the detached flush. With no switch set and a fresh marker it costs one lstat. It
+// opens no connection and can never fail the hook.
+func hookTelemetry(base string, now time.Time) {
+	defer func() { _ = recover() }()
+	if telemetry.EnvOff(os.Getenv) != "" {
+		telemetry.NoteOff(base, now)
+	}
+	if telemetry.TouchAttempt(base, now) && telemetry.Decide(telemetryOptions()).Sendable {
+		spawnTelemetry(nil)
+	}
+}
+
 // hookAnswer turns one harness payload into the harness's answer. Every failure, panics included,
-// becomes the dialect's empty answer; internal errors go to <stateDir>/hook.log.
-func hookAnswer(harness, phase string, stdin []byte, now func() time.Time, answered ...<-chan struct{}) (out []byte) {
+// becomes the dialect's empty answer; internal errors go to <stateDir>/hook.log. base is the
+// telemetry state directory on a pre-run call inside a repo, else empty.
+func hookAnswer(harness, phase string, stdin []byte, now func() time.Time) (out []byte, base string) {
 	d, ok := dialects[harness]
 	if !ok {
-		return []byte("{}\n")
+		return []byte("{}\n"), ""
 	}
 	if phase == "" {
 		phase = hook.PhasePre
@@ -111,7 +128,7 @@ func hookAnswer(harness, phase string, stdin []byte, now func() time.Time, answe
 
 	req, err := d.parse(stdin)
 	if err != nil {
-		return render(d, protocol.Allow(""), phase)
+		return render(d, protocol.Allow(""), phase), ""
 	}
 	if req.Phase == "" {
 		req.Phase = phase
@@ -123,10 +140,10 @@ func hookAnswer(harness, phase string, stdin []byte, now func() time.Time, answe
 	// Rule 1 and its 5 ms budget: nothing else is loaded outside a repo.
 	root, ok := repo.FindRoot(req.Cwd)
 	if !ok {
-		return render(d, protocol.Allow(""), phase)
+		return render(d, protocol.Allow(""), phase), ""
 	}
 	if stateDir, err = repo.StateDir(root); err != nil {
-		return render(d, protocol.Allow(""), phase)
+		return render(d, protocol.Allow(""), phase), ""
 	}
 	cfg := hook.Config{RepoRoot: root, StateDir: stateDir}
 	if req.Phase == hook.PhasePre { // post only replays the cache (rule 0)
@@ -138,19 +155,7 @@ func hookAnswer(harness, phase string, stdin []byte, now func() time.Time, answe
 				repo.Prune(stateDir, now())
 			}()
 		}
-		base := filepath.Dir(stateDir)
-		if telemetry.FlushDue(base, now()) {
-			hookBackground.Add(1)
-			go func() {
-				defer hookBackground.Done()
-				if len(answered) > 0 {
-					<-answered[0] // production flush starts only after the answer has been written
-				}
-				if telemetry.TouchAttempt(base, now()) && telemetry.Decide(telemetryOptions()).Sendable {
-					spawnTelemetry(nil)
-				}
-			}()
-		}
+		base = filepath.Dir(stateDir)
 	}
 	deps := hook.DefaultDeps(stateDir)
 	deps.Log = func(err error) { hookLog(stateDir, err, now()) }
@@ -160,7 +165,7 @@ func hookAnswer(harness, phase string, stdin []byte, now func() time.Time, answe
 			hookLog(stateDir, err, now())
 		}
 	}
-	return render(d, protocol.Allow(dec.Hint), phase)
+	return render(d, protocol.Allow(dec.Hint), phase), base
 }
 
 // hookConfig builds the engine's view of the repo: indexed blocks with compiled patterns, the fps

@@ -232,7 +232,7 @@ func TestRelativeBaseRefused(t *testing.T) {
 	saved(t, Options{Base: dir}, onState(true))
 	put(t, filepath.Join(dir, ".caveman-cloud", "config.json"), `{"telemetry":{"enabled":false,"decidedAt":"2026-10-01T00:00:00Z","promptVersion":1}}`)
 	o.Base, o.Home = "", ""
-	if d := Decide(o); d.Saved || d.Sendable || d.Status != "not started" {
+	if d := Decide(o); d.Saved || d.Sendable || d.Status != "off" {
 		t.Fatalf("planted files were read: %+v", d)
 	}
 	if _, err := SaveChoice(o, true, true); err == nil {
@@ -275,5 +275,85 @@ func TestInAgent(t *testing.T) {
 		if !InAgent(get) {
 			t.Errorf("%s not recognized", k)
 		}
+	}
+}
+
+// A telemetry.json that cannot be read as a choice is off, never "nothing decided": the default
+// must not be written over what may have been an opt-out.
+func TestDamagedChoiceIsOff(t *testing.T) {
+	for _, text := range []string{`{"enabled": false, "explicit": true,}`, `{}`, `[]`, ""} {
+		o := testOptions(t)
+		put(t, filepath.Join(o.Base, "telemetry.json"), text)
+		if d := Decide(o); d.Status != "off" || d.Saved || d.Sendable || !strings.Contains(d.Reason, "unreadable") {
+			t.Fatalf("%q: %+v", text, d)
+		}
+	}
+}
+
+// A shared install ID is used only while the Caveman CLI still holds it with telemetry on.
+func TestRetiredSharedID(t *testing.T) {
+	const other = "abcdefab-cdef-4abc-8abc-abcdefabcdef"
+	caveman := func(o Options, body string) {
+		put(t, filepath.Join(o.Home, ".caveman-cloud", "config.json"), body)
+	}
+	o := testOptions(t)
+	s := onState(true)
+	s.Linked = true
+	saved(t, o, s)
+	caveman(o, `{"telemetry":{"enabled":true,"decidedAt":"2026-10-01T00:00:00Z","promptVersion":5,"anonymousId":"`+strings.ToUpper(testID)+`"}}`)
+	if d := Decide(o); !d.Sendable {
+		t.Fatalf("held link: %+v", d)
+	}
+	for name, body := range map[string]string{
+		"opted out": `{"telemetry":{"enabled":false,"decidedAt":"2026-10-03T00:00:00Z","promptVersion":5}}`,
+		"new id":    `{"telemetry":{"enabled":true,"decidedAt":"2026-10-03T00:00:00Z","promptVersion":5,"anonymousId":"` + other + `"}}`,
+	} {
+		caveman(o, body)
+		if d := Decide(o); d.Sendable || d.Status != "not started" || !strings.Contains(d.Reason, "retired") {
+			t.Fatalf("%s: still sendable under the shared ID: %+v", name, d)
+		}
+	}
+	// The next save replaces the retired ID (here: links to the Caveman CLI's new one) and restarts the clock.
+	next, err := SaveChoice(o, true, true)
+	if err != nil || next.AnonymousID != other || !next.Linked || next.DecidedAt != "2026-10-04T12:00:00Z" {
+		t.Fatalf("re-link: %+v %v", next, err)
+	}
+	caveman(o, `{"telemetry":{"enabled":false,"decidedAt":"2026-10-04T00:00:00Z","promptVersion":5}}`)
+	if next, err = SaveChoice(o, true, true); err != nil || next.AnonymousID == other || next.Linked || !validUUID(next.AnonymousID) {
+		t.Fatalf("own ID after the Caveman CLI opted out: %+v %v", next, err)
+	}
+}
+
+func TestEndpointOverride(t *testing.T) {
+	for url, want := range map[string]string{
+		"":                                    DefaultURL,
+		"https://example.invalid/x":           "https://example.invalid/x",
+		"http://127.0.0.1:54321/functions":    "http://127.0.0.1:54321/functions",
+		"http://localhost/x":                  "http://localhost/x",
+		"http://example.invalid/x":            "",
+		"-K/tmp/attacker.curlrc":              "",
+		"https://example.invalid/x -o /tmp/y": "",
+		"file:///etc/hosts":                   "",
+	} {
+		o := testOptions(t)
+		o.Getenv = func(k string) string {
+			if k == "CAVEMAN_BLOCKS_TELEMETRY_URL" {
+				return url
+			}
+			return ""
+		}
+		if got := o.Endpoint(); got != want {
+			t.Errorf("%q: got %q, want %q", url, got, want)
+		}
+	}
+}
+
+func TestFutureMarkerIsDue(t *testing.T) {
+	o := testOptions(t)
+	if err := os.MkdirAll(o.Base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !TouchAttempt(o.Base, o.Now().AddDate(0, 3, 0)) || !FlushDue(o.Base, o.Now()) {
+		t.Fatal("a marker from the future stalled the daily attempt")
 	}
 }

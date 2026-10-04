@@ -5,7 +5,9 @@ package telemetry
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,12 +56,23 @@ func (o Options) now() time.Time {
 	return o.Now().UTC()
 }
 
-// Endpoint returns the override or the documented destination.
+// Endpoint returns the documented destination, or a valid CAVEMAN_BLOCKS_TELEMETRY_URL. An override
+// that is not https (or plain http to this machine, for tests) yields "": nothing is sent, rather
+// than sent somewhere the override did not name or handed to curl as an option.
 func (o Options) Endpoint() string {
-	if url := o.env("CAVEMAN_BLOCKS_TELEMETRY_URL"); url != "" {
-		return url
+	url := o.env("CAVEMAN_BLOCKS_TELEMETRY_URL")
+	if url == "" {
+		return DefaultURL
 	}
-	return DefaultURL
+	if strings.ContainsAny(url, " \t\r\n") {
+		return ""
+	}
+	for _, prefix := range []string{"https://", "http://127.0.0.1:", "http://127.0.0.1/", "http://localhost:", "http://localhost/"} {
+		if strings.HasPrefix(url, prefix) {
+			return url
+		}
+	}
+	return ""
 }
 
 // State is the local telemetry.json choice, separate from the wire Event.
@@ -81,18 +94,31 @@ type Decision struct {
 	Sendable       bool
 }
 
+// EnvOff names the environment switch that has telemetry off for this process, or "".
+func EnvOff(getenv func(string) string) string {
+	if v := getenv("DO_NOT_TRACK"); v != "" && v != "0" {
+		return "DO_NOT_TRACK"
+	}
+	if switchOff(getenv("CAVEMAN_BLOCKS_TELEMETRY")) {
+		return "CAVEMAN_BLOCKS_TELEMETRY"
+	}
+	if switchOff(getenv("CAVEMAN_TELEMETRY")) {
+		return "CAVEMAN_TELEMETRY"
+	}
+	if v := getenv("CI"); v != "" && v != "0" && !strings.EqualFold(v, "false") {
+		return "CI"
+	}
+	return ""
+}
+
 // Decide applies the documented precedence without saving anything.
 func Decide(o Options) Decision {
-	s, saved := loadState(o.Base)
+	s, saved, damaged := loadState(o.Base)
 	d := Decision{State: s, Saved: saved, Status: "off"}
-	if v := o.env("DO_NOT_TRACK"); v != "" && v != "0" {
-		d.Reason, d.EnvOff = "DO_NOT_TRACK", true
-	} else if switchOff(o.env("CAVEMAN_BLOCKS_TELEMETRY")) {
-		d.Reason, d.EnvOff = "CAVEMAN_BLOCKS_TELEMETRY", true
-	} else if switchOff(o.env("CAVEMAN_TELEMETRY")) {
-		d.Reason, d.EnvOff = "CAVEMAN_TELEMETRY", true
-	} else if v := o.env("CI"); v != "" && v != "0" && !strings.EqualFold(v, "false") {
-		d.Reason = "CI"
+	if name := EnvOff(o.env); name != "" {
+		d.Reason, d.EnvOff = name, name != "CI" // CI is never saved as a choice
+	} else if damaged {
+		d.Reason = "an unreadable telemetry.json (run caveman-blocks telemetry on or off)"
 	} else if saved && s.Explicit {
 		d.Reason = "your choice"
 		if s.Enabled {
@@ -108,6 +134,10 @@ func Decide(o Options) Decision {
 	} else {
 		d.Status, d.Reason = "not started", "the default (awaiting an interactive command)"
 	}
+	// A shared ID is ours to use only while the Caveman CLI still holds it with telemetry on.
+	if d.Status == "on" && s.Linked && !linkHolds(o.Home, s) {
+		d.Status, d.Reason = "not started", "the Caveman CLI retired the shared install ID (awaiting an interactive command)"
+	}
 	d.Sendable = d.Status == "on" && saved && s.Enabled && validUUID(s.AnonymousID) && s.Disclosure >= DisclosureVersion
 	return d
 }
@@ -120,17 +150,28 @@ func switchOff(v string) bool {
 	return v != "1" && v != "true" && v != "on"
 }
 
-func loadState(base string) (State, bool) {
-	var saved struct {
+// loadState reads telemetry.json. damaged means something is there that cannot be read as a choice:
+// it is never mistaken for "nothing decided", so the default is never written over it.
+func loadState(base string) (s State, saved, damaged bool) {
+	var file struct {
 		State
 		Enabled *bool `json:"enabled"`
 	}
 	b, err := readSafe(base, "telemetry.json")
-	if err != nil || json.Unmarshal(b, &saved) != nil || saved.Enabled == nil {
-		return State{}, false
+	if errors.Is(err, fs.ErrNotExist) {
+		return State{}, false, false
 	}
-	saved.State.Enabled = *saved.Enabled
-	return saved.State, true
+	if err != nil || json.Unmarshal(b, &file) != nil || file.Enabled == nil {
+		return State{}, false, true
+	}
+	file.State.Enabled = *file.Enabled
+	return file.State, true, false
+}
+
+// linkHolds reports whether the Caveman CLI still has telemetry on under the ID we share with it.
+func linkHolds(home string, s State) bool {
+	c := cavemanChoice(home)
+	return c.Enabled != nil && *c.Enabled && strings.EqualFold(c.AnonymousID, s.AnonymousID)
 }
 
 type cavemanTelemetry struct {
@@ -154,8 +195,11 @@ func cavemanChoice(home string) cavemanTelemetry {
 // SaveChoice atomically saves an explicit on/off or the disclosed default. Off always removes the
 // ID and link. An existing on ID and channel survive repeated on commands.
 func SaveChoice(o Options, enabled, explicit bool) (State, error) {
-	s, _ := loadState(o.Base)
-	// decided_at bounds which days are sent (rollup), so a repeated `on` must not move it.
+	s, _, _ := loadState(o.Base)
+	if s.Linked && !linkHolds(o.Home, s) {
+		s.AnonymousID, s.Linked = "", false // the Caveman CLI retired that ID; never keep using it
+	}
+	// decided_at bounds what is sent (rollup), so a repeated `on` must not move it.
 	if !(enabled && s.Enabled && validUUID(s.AnonymousID)) {
 		s.DecidedAt = o.now().Format(time.RFC3339)
 	}

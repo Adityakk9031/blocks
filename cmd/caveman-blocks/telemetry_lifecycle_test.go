@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/caveman-ai/blocks/internal/scan"
 	"github.com/caveman-ai/blocks/internal/telemetry"
+	"github.com/spf13/cobra"
 )
 
 // All tests, including existing hook tests and testscript children, must never detach the test binary.
@@ -73,7 +75,7 @@ func TestTelemetryLifecycle(t *testing.T) {
 }
 
 func TestTelemetryNonInteractiveAndExcluded(t *testing.T) {
-	for _, argv := range [][]string{nil, {"hook"}, {"help"}, {"version"}, {"--version"}, {"--help"}, {"add", "--help"}, {"run", "-h"}, {"telemetry", "flush"}} {
+	for _, argv := range [][]string{nil, {"hook"}, {"help"}, {"version"}, {"--version"}, {"-v"}, {"--help"}, {"add", "--help"}, {"run", "-h"}, {"telemetry", "flush"}} {
 		o, stderr, calls := cliTelemetry(t)
 		if beginTelemetry(o, true, stderr, argv) != nil || stderr.Len() != 0 || len(*calls) != 0 || telemetry.Decide(o).Saved {
 			t.Fatalf("excluded invocation did telemetry: %v", argv)
@@ -214,11 +216,101 @@ func TestNoNetworkDependencies(t *testing.T) {
 }
 
 func TestDisclosureSaveFailure(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root writes into a read-only directory")
+	}
 	o, stderr, calls := cliTelemetry(t)
-	o.Base = "not-an-absolute-state-path"
+	if err := os.MkdirAll(o.Base, 0o500); err != nil { // the choice cannot be saved here
+		t.Fatal(err)
+	}
 	s := beginTelemetry(o, true, stderr, []string{"stats"})
 	s.end(nil, 1)
-	if stderr.Len() != 0 || s.firstRun || len(*calls) != 0 {
-		t.Fatal("failed save disclosed or sent")
+	if stderr.Len() != 0 || len(*calls) != 0 || telemetry.Decide(o).Saved {
+		t.Fatalf("failed save disclosed or sent: %q %+v", stderr.String(), *calls)
+	}
+}
+
+// A damaged telemetry.json may have been an opt-out: no disclosure, no default written over it.
+func TestDamagedChoiceIsNotOverwritten(t *testing.T) {
+	o, stderr, calls := cliTelemetry(t)
+	file := filepath.Join(o.Base, "telemetry.json")
+	const damaged = `{"enabled": false, "explicit": true,}`
+	if err := os.MkdirAll(o.Base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(damaged), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	beginTelemetry(o, true, stderr, []string{"lint"}).end(nil, 0)
+	if b, _ := os.ReadFile(file); string(b) != damaged || stderr.Len() != 0 || len(*calls) != 0 {
+		t.Fatalf("damaged choice: file %q, stderr %q, sent %+v", b, stderr.String(), *calls)
+	}
+}
+
+// A yes comes from a person. Without one `telemetry on` refuses; with one it shows the disclosure
+// and the new install ID's first_run goes out with the command.
+func TestTelemetryOnNeedsAPerson(t *testing.T) {
+	o, stderr, calls := cliTelemetry(t)
+	old := telemetryInteractive
+	t.Cleanup(func() { telemetryInteractive = old })
+	on := func() (*cobra.Command, error) {
+		root := newRoot()
+		root.SetArgs([]string{"telemetry", "on"})
+		root.SetErr(stderr)
+		return root.ExecuteC()
+	}
+	telemetryInteractive = func() bool { return false }
+	if _, err := on(); err == nil || !isUsage(err) || telemetry.Decide(o).Saved || stderr.Len() != 0 {
+		t.Fatalf("an agent turned telemetry on: %v %q", err, stderr.String())
+	}
+	telemetryInteractive = func() bool { return true }
+	session := beginTelemetry(o, true, stderr, []string{"telemetry", "on"})
+	c, err := on()
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.end(c, 0)
+	d := telemetry.Decide(o)
+	if !d.Sendable || !d.State.Explicit || stderr.String() != telemetry.Disclosure+"\n" {
+		t.Fatalf("on: %+v %q", d, stderr.String())
+	}
+	if len(*calls) != 1 || len((*calls)[0]) != 2 || (*calls)[0][0].Event != "first_run" ||
+		(*calls)[0][1].Command != "telemetry" || (*calls)[0][1].Subcommand != "on" {
+		t.Fatalf("events: %+v", *calls)
+	}
+}
+
+// run() end to end: the scan's totals reach the event through the command context, and the exit
+// code run() returns is the one classified.
+func TestRunWiring(t *testing.T) {
+	o, _, calls := cliTelemetry(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	for _, k := range []string{"DO_NOT_TRACK", "CAVEMAN_BLOCKS_TELEMETRY", "CAVEMAN_TELEMETRY", "CI"} {
+		t.Setenv(k, "")
+	}
+	oldInteractive, oldArgs := telemetryInteractive, os.Args
+	t.Cleanup(func() { telemetryInteractive, os.Args = oldInteractive, oldArgs })
+	telemetryInteractive = func() bool { return true }
+
+	os.Args = []string{"caveman-blocks", "scan", "--since", "2d", "--harness", "claude"}
+	if code := run(); code != 0 {
+		t.Fatalf("scan exit %d", code)
+	}
+	if len(*calls) != 1 || len((*calls)[0]) != 2 || (*calls)[0][0].Event != "first_run" {
+		t.Fatalf("scan events: %+v", *calls)
+	}
+	if e := (*calls)[0][1]; e.Command != "scan" || e.ExitClass != "ok" || e.ScanWindowDays != 2 || e.AnonymousID != telemetry.Decide(o).State.AnonymousID {
+		t.Fatalf("scan event: %+v", e)
+	}
+	os.Args = []string{"caveman-blocks", "run"}
+	if code := run(); code != 2 {
+		t.Fatalf("run without a name: exit %d", code)
+	}
+	if len(*calls) != 2 || len((*calls)[1]) != 1 {
+		t.Fatalf("second command events: %+v", *calls)
+	}
+	if e := (*calls)[1][0]; e.Command != "run" || e.ExitClass != "error" || e.ErrorClass != "usage" {
+		t.Fatalf("usage error event: %+v", e)
 	}
 }
