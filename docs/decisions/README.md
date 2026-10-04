@@ -15,3 +15,4 @@ be amended in place with a dated note; after release, a new record supersedes it
 | [0008](0008-independent-of-caveman-wrap.md) | Independent of Caveman Wrap: own installer, adapters and CLI | accepted |
 | [0009](0009-blocks-stay-in-repo.md) | User blocks never leave the repo; only the first-party registry is public | accepted |
 | [0010](0010-hint-only-hook-live-capture.md) | The hook hints and captures, never denies; live capture stays | accepted |
+| [0011](0011-opt-out-usage-telemetry.md) | Opt-out usage telemetry: counts only, sent by the system curl | accepted |

@@ -15,3 +15,5 @@ The only public registry is the set of blocks in this repository's `blocks/` fol
 - Supply-chain exposure is limited to this repository's own review process.
 - Cross-repo sharing inside an organization is a later, opt-in feature, not a registry.
 - Contributions to the first-party registry are pull requests here and pass lint, verify and review.
+
+Amended 2026-10-03 by [0011](0011-opt-out-usage-telemetry.md): the binary still opens no connection, but opt-out usage counts are sent through the system `curl`. User blocks still never leave the repo.
