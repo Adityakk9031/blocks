@@ -43,7 +43,9 @@ func beginTelemetry(o telemetry.Options, interactive bool, stderr io.Writer, arg
 	}
 	d := telemetry.Decide(o)
 	t := &commandTelemetry{options: o, started: o.Now(), argv: argv, startID: d.State.AnonymousID}
-	if d.EnvOff && d.Saved && d.State.Enabled {
+	// A switch seen here is saved as an explicit off when something would otherwise send: a saved on,
+	// or the Caveman CLI's yes a hook launched without the switch (a GUI app) would enroll under.
+	if d.EnvOff && (d.Saved && d.State.Enabled || !d.Saved && telemetry.HubWouldCover(o)) {
 		if _, err := telemetry.SaveChoice(o, false, true); err == nil && d.State.AnonymousID != "" {
 			fmt.Fprintln(stderr, telemetry.OffNotice(d.State.AnonymousID))
 		}

@@ -30,7 +30,8 @@ are sent, because that list is public and fixed.
 6. An opt-out saved by the Caveman CLI (`caveman telemetry off`): off. Blocks reads that CLI's
    config where it keeps it, `$CAVEMAN_HOME/cloud.json` (default `~/.caveman/cloud.json`). When that
    file exists it decides, and one that cannot be read counts as no choice: Blocks neither enrolls nor
-   keeps a shared ID on it, and never falls back to the old file. Only without it is the old
+   keeps a shared ID on it, and never falls back to the old file. A `cloud.json` symlink to nothing
+counts as a file that cannot be read. Only without it is the old
    `~/.caveman-cloud/config.json` read, for older Caveman CLIs; an opt-out found there holds either way.
 7. The default, on. It takes effect only once a disclosure has been shown and the choice saved:
    - The Caveman CLI's own notice covers Blocks from its disclosure version 6 (`promptVersion` 6 in
@@ -54,8 +55,8 @@ Only a person at a terminal can turn telemetry on: `telemetry on` refuses anywhe
 script can turn it off. A `telemetry.json` that cannot be read counts as off and is never replaced by
 the default.
 
-When an interactive command sees switch 1, 2 or 3 while the saved choice is on, it saves a lasting
-`off`. Hooks started by desktop apps often never read your shell profile, so the environment variable
+When an interactive command sees switch 1, 2 or 3 while the saved choice is on, or while nothing is
+saved yet but the Caveman CLI's yes would start Blocks (control 7), it saves a lasting `off`. Hooks started by desktop apps often never read your shell profile, so the environment variable
 alone would not reach them.
 
 The disclosure line, printed once on stderr before the first interactive command runs:

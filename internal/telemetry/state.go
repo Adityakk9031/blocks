@@ -197,13 +197,28 @@ func Observe(o Options) Decision {
 
 // Enroll saves the linked default without printing anything when the Caveman CLI's disclosure covers
 // Blocks (Decision.HubCovered). Any process may call it, the hook and commands without a terminal
-// included: that CLI printed the notice. decided_at is now, so nothing counted before is sent.
+// included: that CLI printed the notice. decided_at is now, so nothing counted before is sent. It
+// never mints an ID of its own: should the link stop holding before the save, nothing is saved.
 func Enroll(o Options) bool {
 	if !Decide(o).HubCovered {
 		return false
 	}
-	s, err := SaveChoice(o, true, false)
+	s, err := saveChoice(o, true, false, true)
 	return err == nil && s.Linked
+}
+
+// HubWouldCover reports whether, but for an environment switch, Enroll would start this install
+// under the Caveman CLI's yes. A hook launched without that switch (a GUI app) would then enroll.
+func HubWouldCover(o Options) bool {
+	bare := o
+	bare.Getenv = func(k string) string {
+		switch k {
+		case "DO_NOT_TRACK", "CAVEMAN_BLOCKS_TELEMETRY", "CAVEMAN_TELEMETRY", "CI":
+			return ""
+		}
+		return o.env(k)
+	}
+	return Decide(bare).HubCovered
 }
 
 func switchOff(v string) bool {
@@ -266,7 +281,8 @@ func cavemanChoice(o Options) cavemanTelemetry {
 	if legacyErr == nil && legacy.Enabled != nil && !*legacy.Enabled {
 		return legacy
 	}
-	if errors.Is(err, fs.ErrNotExist) {
+	// Exists means the name is there at all: a dangling symlink is a cloud.json that cannot be read.
+	if _, lerr := os.Lstat(filepath.Join(home, "cloud.json")); errors.Is(err, fs.ErrNotExist) && lerr != nil {
 		return legacy
 	}
 	return current
@@ -288,10 +304,30 @@ func readChoice(base, name string) (cavemanTelemetry, error) {
 	return c.Telemetry, nil
 }
 
+var errNoLink = errors.New("telemetry: the Caveman CLI no longer shares an install ID")
+
 // SaveChoice atomically saves an explicit on/off or the disclosed default. Off always removes the
-// ID and link. An existing on ID and channel survive repeated on commands.
+// ID and link. An existing on ID and channel survive repeated on commands. A default never replaces
+// an explicit choice: that is returned as saved, unwritten.
 func SaveChoice(o Options, enabled, explicit bool) (State, error) {
+	return saveChoice(o, enabled, explicit, false)
+}
+
+// saveChoice is SaveChoice; linkOnly (Enroll) saves only under the Caveman CLI's current ID and
+// otherwise fails with errNoLink, never minting one. The read-modify-write holds the state lock.
+func saveChoice(o Options, enabled, explicit, linkOnly bool) (State, error) {
+	unlock, err := lockState(o.Base)
+	if err != nil {
+		return State{}, err
+	}
+	defer unlock()
 	s, _, _ := loadState(o.Base)
+	if !explicit && s.Explicit {
+		return s, nil
+	}
+	if linkOnly && !hubCovers(o) {
+		return State{}, errNoLink
+	}
 	if s.Linked && !linkHolds(o, s) {
 		s.AnonymousID, s.Linked = "", false // the Caveman CLI retired that ID; never keep using it
 	}
@@ -311,6 +347,8 @@ func SaveChoice(o Options, enabled, explicit bool) (State, error) {
 			s.Linked = c.Enabled != nil && *c.Enabled && validUUID(c.AnonymousID)
 			if s.Linked {
 				s.AnonymousID = strings.ToLower(c.AnonymousID)
+			} else if linkOnly {
+				return State{}, errNoLink
 			} else {
 				var b [16]byte
 				if _, err := rand.Read(b[:]); err != nil {

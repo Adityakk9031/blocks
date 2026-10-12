@@ -1,8 +1,10 @@
 package telemetry
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -69,6 +71,39 @@ func writeSafe(base, name string, data []byte) error {
 		return err
 	}
 	return repo.WriteFileSafe(base, name, data, 0o600)
+}
+
+// lockState serializes telemetry.json's read-modify-write across processes with an O_EXCL lock file
+// (portable, Windows included). A lock older than 10s is a crashed holder's and is taken over.
+// ponytail: two processes taking over the same stale lock at once can both proceed; that needs a
+// crash and a race in the same 10s window.
+func lockState(base string) (func(), error) {
+	p, err := path(base, "telemetry.lock")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL|repo.NoFollow, 0o600)
+		if err == nil {
+			f.Close()
+			return func() { os.Remove(p) }, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return nil, err
+		}
+		if fi, err := os.Lstat(p); err == nil && time.Since(fi.ModTime()) > 10*time.Second {
+			os.Remove(p)
+			continue
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("telemetry: %s is held", p)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // FlushDue checks only the marker's mtime, including when telemetry is off. A marker from the

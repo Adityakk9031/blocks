@@ -355,3 +355,36 @@ func TestHubCoveredCommandPrintsNothing(t *testing.T) {
 		t.Fatalf("events: %+v", *calls)
 	}
 }
+
+// A switch seen by a command is saved before a hook without it (a GUI app) can enroll under the hub's yes.
+func TestEnvOffPersistsBeforeHubEnrollment(t *testing.T) {
+	for _, key := range []string{"DO_NOT_TRACK", "CAVEMAN_BLOCKS_TELEMETRY", "CAVEMAN_TELEMETRY", "CI"} {
+		t.Run(key, func(t *testing.T) {
+			o, stderr, calls := cliTelemetry(t)
+			hub := `{"telemetry":{"enabled":true,"decidedAt":"2026-10-01T00:00:00Z","promptVersion":6,"anonymousId":"ABCDEF01-2345-4678-89AB-CDEF01234567"}}`
+			if err := os.MkdirAll(filepath.Join(o.Home, ".caveman"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(o.Home, ".caveman", "cloud.json"), []byte(hub), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			value := "off"
+			if key == "DO_NOT_TRACK" || key == "CI" {
+				value = "1"
+			}
+			withSwitch := o
+			withSwitch.Getenv = func(k string) string { return map[string]string{key: value}[k] }
+			beginTelemetry(withSwitch, true, stderr, []string{"stats"}).end(nil, 0)
+			d := telemetry.Observe(o) // the hook, without the switch
+			if key == "CI" {
+				if !d.Sendable || !d.State.Linked {
+					t.Fatalf("CI was saved as a choice: %+v", d)
+				}
+				return
+			}
+			if d.Sendable || d.Status != "off" || !d.State.Explicit || d.State.AnonymousID != "" || stderr.Len() != 0 || len(*calls) != 0 {
+				t.Fatalf("hook enrolled after %s: %+v %q", key, d, stderr.String())
+			}
+		})
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -127,5 +128,103 @@ func TestHubEnrollmentNeverUnderASwitch(t *testing.T) {
 		if d := Observe(o); d.Sendable || d.State.AnonymousID != "" {
 			t.Fatalf("%s enrolled: %+v", k, d)
 		}
+	}
+}
+
+// An explicit off saved while an Enroll is in flight (it decided before the off) is never replaced.
+func TestExplicitOffSurvivesStaleEnroll(t *testing.T) {
+	o := testOptions(t)
+	putHub(t, o, hubConfig(true, 6, hubID))
+	if _, err := SaveChoice(o, false, true); err != nil {
+		t.Fatal(err)
+	}
+	// What a stale Enroll does after its check passed: save the default.
+	if s, err := saveChoice(o, true, false, true); err != nil || s.Enabled || !s.Explicit {
+		t.Fatalf("stale default save: %+v %v", s, err)
+	}
+	if d := Decide(o); d.Status != "off" || !d.State.Explicit || d.State.AnonymousID != "" {
+		t.Fatalf("explicit off downgraded: %+v", d)
+	}
+
+	// Racing processes: whichever order, the off holds.
+	for range 10 {
+		o := testOptions(t)
+		putHub(t, o, hubConfig(true, 6, hubID))
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() { Enroll(o) })
+		}
+		wg.Go(func() {
+			if _, err := SaveChoice(o, false, true); err != nil {
+				t.Error(err)
+			}
+		})
+		wg.Wait()
+		if d := Decide(o); d.Status != "off" || !d.State.Explicit || d.State.AnonymousID != "" {
+			t.Fatalf("racing enroll beat the off: %+v", d)
+		}
+		if _, err := os.Lstat(filepath.Join(o.Base, "telemetry.lock")); !os.IsNotExist(err) {
+			t.Fatalf("lock left behind: %v", err)
+		}
+	}
+}
+
+// Enroll saves only under the Caveman CLI's ID: once that link is gone it saves nothing, never a
+// random ID of its own.
+func TestEnrollNeverMints(t *testing.T) {
+	for name, hub := range map[string]string{
+		"hub off":       `{"telemetry":{"enabled":false,"decidedAt":"2026-10-03T00:00:00Z","promptVersion":6}}`,
+		"hub v5":        hubConfig(true, 5, hubID),
+		"no ID":         hubConfig(true, 6, ""),
+		"unreadable":    "{",
+		"no hub at all": "",
+	} {
+		o := testOptions(t)
+		if hub != "" {
+			putHub(t, o, hub)
+		}
+		if _, err := saveChoice(o, true, false, true); err != errNoLink {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if Enroll(o) {
+			t.Fatalf("%s: enrolled", name)
+		}
+		if _, err := os.Lstat(filepath.Join(o.Base, "telemetry.json")); !os.IsNotExist(err) {
+			t.Fatalf("%s: saved state: %v", name, err)
+		}
+	}
+}
+
+// A dangling cloud.json symlink is a cloud.json that cannot be read: no legacy fallback.
+func TestDanglingCloudJSONFailsClosed(t *testing.T) {
+	o := testOptions(t)
+	putLegacy(t, o, hubConfig(true, 6, hubID))
+	if err := os.MkdirAll(filepath.Join(o.Home, ".caveman"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(o.Home, "gone.json"), filepath.Join(o.Home, ".caveman", "cloud.json")); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	if c := cavemanChoice(o); c.Enabled != nil {
+		t.Fatalf("fell back to the legacy file: %+v", c)
+	}
+	if d := Observe(o); d.Sendable || d.HubCovered {
+		t.Fatalf("dangling cloud.json enrolled: %+v", d)
+	}
+}
+
+func TestStaleStateLockIsTakenOver(t *testing.T) {
+	o := testOptions(t)
+	lock := filepath.Join(o.Base, "telemetry.lock")
+	put(t, lock, "")
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SaveChoice(o, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(lock); !os.IsNotExist(err) {
+		t.Fatalf("lock left behind: %v", err)
 	}
 }
