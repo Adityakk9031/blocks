@@ -331,3 +331,27 @@ func TestRunMarksOffDay(t *testing.T) {
 		t.Fatalf("exit %d, marked %v, sent %+v", code, marked(o), *calls)
 	}
 }
+
+// The Caveman CLI's promptVersion 6 notice covers Blocks: an interactive command prints no second
+// disclosure, run's Observe enrolls under the shared ID, and the command's events follow.
+func TestHubCoveredCommandPrintsNothing(t *testing.T) {
+	o, stderr, calls := cliTelemetry(t)
+	if err := os.MkdirAll(filepath.Join(o.Home, ".caveman"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	hub := `{"telemetry":{"enabled":true,"decidedAt":"2026-10-01T00:00:00Z","promptVersion":6,"anonymousId":"ABCDEF01-2345-4678-89AB-CDEF01234567"}}`
+	if err := os.WriteFile(filepath.Join(o.Home, ".caveman", "cloud.json"), []byte(hub), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session := beginTelemetry(o, true, stderr, []string{"stats"})
+	if d := telemetry.Observe(o); !d.Sendable || !d.State.Linked || d.State.AnonymousID != "abcdef01-2345-4678-89ab-cdef01234567" {
+		t.Fatalf("not enrolled: %+v", d)
+	}
+	session.end(newRoot().Commands()[0], 0)
+	if stderr.Len() != 0 {
+		t.Fatalf("printed a second disclosure: %q", stderr.String())
+	}
+	if len(*calls) != 1 || len((*calls)[0]) != 2 || (*calls)[0][0].Event != "first_run" {
+		t.Fatalf("events: %+v", *calls)
+	}
+}

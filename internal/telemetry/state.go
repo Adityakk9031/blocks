@@ -25,6 +25,13 @@ const DisclosureVersion = 1
 // Disclosure is the documented, verbatim first-interactive-command notice.
 const Disclosure = "usage counts on · commands, hints shown and followed, block runs, a random install ID, OS and your IP address · never scripts, file paths, repo names or names of blocks you wrote · this is what keeps Blocks free · off: caveman-blocks telemetry off · https://github.com/caveman-ai/blocks/blob/main/docs/TELEMETRY.md"
 
+// HubPromptVersion is the first Caveman CLI disclosure (its saved promptVersion) that names Blocks'
+// counts. A yes saved under it covers Blocks too: one notice, one opt-out for both (decision 0011).
+const HubPromptVersion = 6
+
+// HubReason is the status reason while a default follows the Caveman CLI's yes.
+const HubReason = "covered by the Caveman CLI's telemetry (caveman telemetry off turns both off)"
+
 // DefaultURL is the documented receiver; only CAVEMAN_BLOCKS_TELEMETRY_URL overrides it.
 const DefaultURL = "https://xvfgtprkhzlvegvmeefq.supabase.co/functions/v1/blocks-telemetry"
 
@@ -99,6 +106,9 @@ type Decision struct {
 	State          State
 	Saved, EnvOff  bool
 	Sendable       bool
+	// HubCovered: nothing is started yet, Blocks has no explicit choice, and the Caveman CLI's yes was
+	// given under a disclosure that names Blocks, so Enroll may save the linked default silently.
+	HubCovered bool
 }
 
 // EnvOff names the environment switch that has telemetry off for this process, or "".
@@ -131,19 +141,25 @@ func Decide(o Options) Decision {
 		if s.Enabled {
 			d.Status = "on"
 		}
-	} else if c := cavemanChoice(o.Home); c.Enabled != nil && !*c.Enabled {
+	} else if c := cavemanChoice(o); c.Enabled != nil && !*c.Enabled {
 		d.Reason = "the Caveman CLI opt-out"
 	} else if saved {
 		d.Reason = "the default"
 		if s.Enabled {
 			d.Status = "on"
+			if s.Linked && hubCovers(o) {
+				d.Reason = HubReason
+			}
 		}
 	} else {
 		d.Status, d.Reason = "not started", "the default (awaiting an interactive command)"
 	}
 	// A shared ID is ours to use only while the Caveman CLI still holds it with telemetry on.
-	if d.Status == "on" && s.Linked && !linkHolds(o.Home, s) {
+	if d.Status == "on" && s.Linked && !linkHolds(o, s) {
 		d.Status, d.Reason = "not started", "the Caveman CLI retired the shared install ID (awaiting an interactive command)"
+	}
+	if d.Status == "not started" && !s.Explicit && hubCovers(o) {
+		d.HubCovered, d.Reason = true, HubReason+" · starts on the next caveman-blocks run"
 	}
 	d.Sendable = d.Status == "on" && saved && s.Enabled && validUUID(s.AnonymousID) && s.Disclosure >= DisclosureVersion
 	return d
@@ -173,7 +189,21 @@ func Observe(o Options) Decision {
 		}
 	}
 	NoteOff(o.Base, o.now())
+	if d.HubCovered && Enroll(o) {
+		return Decide(o)
+	}
 	return d
+}
+
+// Enroll saves the linked default without printing anything when the Caveman CLI's disclosure covers
+// Blocks (Decision.HubCovered). Any process may call it, the hook and commands without a terminal
+// included: that CLI printed the notice. decided_at is now, so nothing counted before is sent.
+func Enroll(o Options) bool {
+	if !Decide(o).HubCovered {
+		return false
+	}
+	s, err := SaveChoice(o, true, false)
+	return err == nil && s.Linked
 }
 
 func switchOff(v string) bool {
@@ -203,8 +233,8 @@ func loadState(base string) (s State, saved, damaged bool) {
 }
 
 // linkHolds reports whether the Caveman CLI still has telemetry on under the ID we share with it.
-func linkHolds(home string, s State) bool {
-	c := cavemanChoice(home)
+func linkHolds(o Options, s State) bool {
+	c := cavemanChoice(o)
 	return c.Enabled != nil && *c.Enabled && strings.EqualFold(c.AnonymousID, s.AnonymousID)
 }
 
@@ -215,23 +245,54 @@ type cavemanTelemetry struct {
 	AnonymousID   string `json:"anonymousId"`
 }
 
-func cavemanChoice(home string) cavemanTelemetry {
+// hubCovers reports a Caveman CLI yes given under a disclosure that names Blocks, with a usable ID.
+func hubCovers(o Options) bool {
+	c := cavemanChoice(o)
+	return c.Enabled != nil && *c.Enabled && c.PromptVersion >= HubPromptVersion && validUUID(c.AnonymousID)
+}
+
+// cavemanChoice reads the Caveman CLI's telemetry decision the way that CLI does. Its config is
+// $CAVEMAN_HOME/cloud.json (default ~/.caveman/cloud.json); when that file exists it is the authority,
+// and one that cannot be read is no choice at all, never a reason to trust the old file. Only without
+// it is ~/.caveman-cloud/config.json (older CLIs) read. An opt-out found in the old file holds either
+// way, as it does for that CLI: an older one still on PATH writes its `off` there only.
+func cavemanChoice(o Options) cavemanTelemetry {
+	home := o.env("CAVEMAN_HOME")
+	if home == "" {
+		home = filepath.Join(o.Home, ".caveman")
+	}
+	current, err := readChoice(home, "cloud.json")
+	legacy, legacyErr := readChoice(o.Home, ".caveman-cloud/config.json")
+	if legacyErr == nil && legacy.Enabled != nil && !*legacy.Enabled {
+		return legacy
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return legacy
+	}
+	return current
+}
+
+// readChoice reads one Caveman CLI config. Any error but a missing file comes back with an empty choice.
+func readChoice(base, name string) (cavemanTelemetry, error) {
 	var c struct {
 		Telemetry cavemanTelemetry `json:"telemetry"`
 	}
-	// The Caveman CLI's own file, not our state: that CLI supports a symlinked config, so follow it.
-	b, err := readUser(home, ".caveman-cloud/config.json")
-	if err != nil || json.Unmarshal(b, &c) != nil || c.Telemetry.Enabled == nil || c.Telemetry.DecidedAt == "" {
-		return cavemanTelemetry{}
+	// That CLI's own file, not our state: it supports a symlinked config, so follow it.
+	b, err := readUser(base, name)
+	if err != nil {
+		return cavemanTelemetry{}, err
 	}
-	return c.Telemetry
+	if json.Unmarshal(b, &c) != nil || c.Telemetry.Enabled == nil || c.Telemetry.DecidedAt == "" {
+		return cavemanTelemetry{}, nil
+	}
+	return c.Telemetry, nil
 }
 
 // SaveChoice atomically saves an explicit on/off or the disclosed default. Off always removes the
 // ID and link. An existing on ID and channel survive repeated on commands.
 func SaveChoice(o Options, enabled, explicit bool) (State, error) {
 	s, _, _ := loadState(o.Base)
-	if s.Linked && !linkHolds(o.Home, s) {
+	if s.Linked && !linkHolds(o, s) {
 		s.AnonymousID, s.Linked = "", false // the Caveman CLI retired that ID; never keep using it
 	}
 	// decided_at is when telemetry last started; rollup sends nothing from before it. It stays put
@@ -246,7 +307,7 @@ func SaveChoice(o Options, enabled, explicit bool) (State, error) {
 	} else {
 		s.Disclosure = DisclosureVersion
 		if !validUUID(s.AnonymousID) {
-			c := cavemanChoice(o.Home)
+			c := cavemanChoice(o)
 			s.Linked = c.Enabled != nil && *c.Enabled && validUUID(c.AnonymousID)
 			if s.Linked {
 				s.AnonymousID = strings.ToLower(c.AnonymousID)

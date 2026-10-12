@@ -47,7 +47,8 @@ func beginTelemetry(o telemetry.Options, interactive bool, stderr io.Writer, arg
 		if _, err := telemetry.SaveChoice(o, false, true); err == nil && d.State.AnonymousID != "" {
 			fmt.Fprintln(stderr, telemetry.OffNotice(d.State.AnonymousID))
 		}
-	} else if argv[0] != "telemetry" && d.Status == "not started" {
+	} else if argv[0] != "telemetry" && d.Status == "not started" && !d.HubCovered {
+		// The Caveman CLI's notice covers a HubCovered install: run's Observe enrolls it silently.
 		// Explicit survives: a yes given with `telemetry on` stays one when a retired shared ID is replaced.
 		if s, err := telemetry.SaveChoice(o, true, d.State.Explicit); err == nil {
 			fmt.Fprintln(stderr, disclosure(s))

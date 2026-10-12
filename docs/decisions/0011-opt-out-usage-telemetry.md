@@ -51,3 +51,24 @@ Contract and controls: [TELEMETRY.md](../TELEMETRY.md).
   name is dropped from events.
 - Reading `~/.caveman-cloud/config.json` is the one place this repository knows about the Caveman
   CLI (0008). It is a file read, not a dependency.
+
+## Addendum, 2026-10-12: the Caveman CLI's notice covers Blocks
+
+The Caveman CLI runs `caveman-blocks` without a terminal (output piped, stdin closed), and the hook
+never enrolls, so its users never reached a Blocks disclosure and sent nothing. caveman v4 also moved
+its config to `$CAVEMAN_HOME/cloud.json` (default `~/.caveman/cloud.json`) and leaves the old
+`~/.caveman-cloud/config.json` in place, where it goes stale: a v4 user who turned telemetry off still
+looked on to Blocks.
+
+Decision: one notice, one opt-out for both. From the Caveman CLI's disclosure version 6, its line
+names the Blocks counts. While that CLI has telemetry on under version 6 or later with an install ID,
+any `caveman-blocks` process saves the default under the shared ID without printing; decided_at is
+then, so nothing counted before is sent. An explicit `caveman-blocks telemetry off`, the environment
+switches and `CI` still win, and the Caveman CLI's opt-out or a new ID stops Blocks at once and marks
+the day off. Without the Caveman CLI, or under an older disclosure, the interactive disclosure stays
+the only way in.
+
+Blocks reads `$CAVEMAN_HOME/cloud.json` first. When it exists it decides; one that cannot be read is
+no choice (no enrollment, no shared ID), never a reason to read the old file. The old file is read
+only when the new one is missing, and an opt-out in it holds either way, as it does for that CLI.
+This is still the one place this repository knows about the Caveman CLI: two file reads, no dependency.

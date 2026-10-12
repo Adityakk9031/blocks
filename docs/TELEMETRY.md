@@ -27,10 +27,21 @@ are sent, because that list is public and fixed.
 3. `CAVEMAN_TELEMETRY`, the Caveman CLI's switch, set the same way: off. It can turn Blocks off, never on.
 4. `CI` set to anything but empty, `0` or `false`: off.
 5. A choice you made with `caveman-blocks telemetry on|off`. An `off` is honored forever.
-6. An opt-out saved by the Caveman CLI (`~/.caveman-cloud/config.json`): off.
-7. The default, on. It takes effect only after an interactive command (stdin and stderr are a
-   terminal) has printed the disclosure line and saved the choice. Until then nothing is sent, and a
-   command without a terminal (run by an agent, in a pipe, by the hook) never saves the default.
+6. An opt-out saved by the Caveman CLI (`caveman telemetry off`): off. Blocks reads that CLI's
+   config where it keeps it, `$CAVEMAN_HOME/cloud.json` (default `~/.caveman/cloud.json`). When that
+   file exists it decides, and one that cannot be read counts as no choice: Blocks neither enrolls nor
+   keeps a shared ID on it, and never falls back to the old file. Only without it is the old
+   `~/.caveman-cloud/config.json` read, for older Caveman CLIs; an opt-out found there holds either way.
+7. The default, on. It takes effect only once a disclosure has been shown and the choice saved:
+   - The Caveman CLI's own notice covers Blocks from its disclosure version 6 (`promptVersion` 6 in
+     that config), which names these counts. While that CLI has telemetry on under version 6 or later
+     with an install ID, any `caveman-blocks` process, the hook and commands without a terminal
+     included, saves the default silently under the shared install ID. One notice, one opt-out:
+     `caveman telemetry off` turns both off. `telemetry status` then says `covered by the Caveman
+     CLI's telemetry`.
+   - Otherwise an interactive command (stdin and stderr are a terminal) prints the disclosure line
+     below and saves the choice. Until then nothing is sent, and a command without a terminal (run by
+     an agent, in a pipe, by the hook) never saves the default.
 
 Off covers what was counted while it was off. Every `caveman-blocks` process that finds telemetry
 off, the hook included, marks the day before it counts anything. A marked day is never sent, nor any
@@ -53,7 +64,8 @@ The disclosure line, printed once on stderr before the first interactive command
 usage counts on · commands, hints shown and followed, block runs, a random install ID, OS and your IP address · never scripts, file paths, repo names or names of blocks you wrote · this is what keeps Blocks free · off: caveman-blocks telemetry off · https://github.com/caveman-ai/blocks/blob/main/docs/TELEMETRY.md
 ```
 
-`help`, `version`, `telemetry status|off` and the hook never print it and never save the default.
+`help`, `version`, `telemetry status|off` and the hook never print it. They save the default only
+when the Caveman CLI's notice covers Blocks (control 7), and then print nothing.
 `telemetry on` prints it. A command run by a known agent harness (`CLAUDECODE`, `CODEX_SANDBOX`,
 `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_THREAD_ID`, `CURSOR_AGENT`, `GEMINI_CLI`, `OPENCODE` or `AGENT` is
 set) is never interactive, even when the harness gives it a terminal: the line has to reach a person.
@@ -62,9 +74,12 @@ set) is never interactive, even when the harness gives it a terminal: the line h
 
 A random UUID, saved with the choice. If the Caveman CLI is installed with its telemetry on, Blocks
 reuses that CLI's install ID, so the two products can be counted as one install; the disclosure line
-then also says `shares the Caveman CLI install ID`. The link is decided when the ID is saved. If the
-Caveman CLI later turns its telemetry off or replaces its ID, Blocks stops using the shared ID at once:
-nothing is sent until the next interactive command saves a new ID and prints the disclosure again.
+then also says `shares the Caveman CLI install ID`. The link is decided when the ID is saved; a default
+saved under the Caveman CLI's notice is always linked. If the Caveman CLI later turns its telemetry off
+or replaces its ID, Blocks stops using the shared ID at once and marks the day off. Nothing is sent
+until the default is saved again: silently under the Caveman CLI's new ID while its notice covers
+Blocks, otherwise by the next interactive command, which prints the disclosure again. Either way
+telemetry restarts then, and nothing from before is sent.
 `telemetry off` deletes the ID from disk and prints it once, because it is the only key to a deletion
 request.
 
@@ -154,7 +169,7 @@ Files, all under `$XDG_STATE_HOME/caveman-blocks/` (default `~/.local/state/cave
 
 | File | Holds |
 |---|---|
-| `telemetry.json` | the saved choice, install ID, install channel. Written by an interactive command, or by `telemetry off` |
+| `telemetry.json` | the saved choice, install ID, install channel. Written by an interactive command, by `telemetry off`, or by any process when the Caveman CLI's notice covers Blocks |
 | `telemetry-attempt` | empty; its mtime is the last time the hook started a flush |
 | `telemetry-off` | empty; its mtime is the last day a process found a switch or a choice off |
 | `telemetry-sent` | the last UTC day whose `daily_usage` was delivered |

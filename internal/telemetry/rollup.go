@@ -26,7 +26,7 @@ func rollup(o Options, s State) (events []Event, through string, err error) {
 	floor = floor.UTC()
 	if !s.Explicit {
 		// The Caveman CLI's opt-out had Blocks off (control 6) until that CLI's latest decision.
-		if c := cavemanChoice(o.Home); c.Enabled != nil {
+		if c := cavemanChoice(o); c.Enabled != nil {
 			at, err := time.Parse(time.RFC3339, c.DecidedAt)
 			if err != nil {
 				return nil, "", nil
