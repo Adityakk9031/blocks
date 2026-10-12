@@ -18,7 +18,7 @@ import (
 type Day struct {
 	Sessions, Scripts, Hints, HintsFollowed, PromoteHints int
 	Calls, Runs, RunsFailed, VerifyPass, VerifyFail       int
-	BytesFull, BytesReturned                              int
+	BytesFull, BytesReturned, ScriptsBytes                int
 	HarnessSessions, BlockRuns                            map[string]int
 }
 
@@ -65,6 +65,7 @@ func Days(stateDir string, floor, from, to time.Time) (map[string]Day, error) {
 		switch e.Kind {
 		case KindScript:
 			d.Scripts++
+			d.ScriptsBytes += e.Bytes
 		case KindHint:
 			d.Hints++
 		case KindPromoteHint:

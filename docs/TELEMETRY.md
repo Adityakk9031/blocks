@@ -120,6 +120,7 @@ oldest first, at most 7 days back, and never activity from a time telemetry was 
 | `repos_active` | int | repos with at least one event that day |
 | `sessions` | int | agent sessions the hook saw; a session that works in two repos counts once per repo |
 | `scripts` | int | inline scripts captured |
+| `scripts_bytes` | int | bytes of inline scripts captured; a count, the scripts stay on the machine |
 | `hints` | int | hints shown |
 | `hints_followed` | int | hints followed by a call of the hinted block in the same session |
 | `promote_hints` | int | promotion suggestions shown |

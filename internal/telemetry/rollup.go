@@ -91,6 +91,7 @@ func rollup(o Options, s State) (events []Event, through string, err error) {
 			d.ReposActive++
 			d.Sessions += count.Sessions
 			d.Scripts += count.Scripts
+			d.ScriptsBytes += count.ScriptsBytes
 			d.Hints += count.Hints
 			d.HintsFollowed += count.HintsFollowed
 			d.PromoteHints += count.PromoteHints

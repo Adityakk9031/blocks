@@ -108,7 +108,7 @@ Nothing reads the lock in v0; it exists so phase 2's `diff` and `update` have pr
 - `INDEX.md`: generated; identical to the `AGENTS.md` section.
 - State dir layout, sighting schema and scrub list: [HOOK.md](HOOK.md#state-directory).
 - `stats.jsonl`: one object per event: `ts`, `session`, `harness` (hook events only), `kind` (`script`, `hint`, `promote-hint`,
-  `call`, `run`, `verify`), `block`, `fp`, `ok`, for `script` events `lines`, and for `run` events
+  `call`, `run`, `verify`), `block`, `fp`, `ok`, for `script` events `lines` and `bytes`, and for `run` events
   `bytes_full`, `bytes_returned`, `exit`. The hook writes `script`, `hint`, `promote-hint` and `call`; the runner writes `run`; `verify`
   writes `verify`. "Hint followed" is a `call` of the hinted block after a `hint` in the same session.
 - Telemetry files, one level above the per-repo state dirs: `telemetry.json`, `telemetry-attempt`,

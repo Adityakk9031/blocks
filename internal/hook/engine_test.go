@@ -201,6 +201,9 @@ func runGolden(t *testing.T, c goldenCase) {
 		if !e.TS.Equal(testNow) || e.Session != in.Session {
 			t.Errorf("event %+v: ts/session not stamped", e)
 		}
+		if e.Kind == KindScript && e.Bytes != len(c.Stub.Extract.Body) {
+			t.Errorf("script event bytes = %d, want body length %d", e.Bytes, len(c.Stub.Extract.Body))
+		}
 		got = append(got, Event{Kind: e.Kind, Block: e.Block, FP: e.FP, Lines: e.Lines})
 	}
 	if !reflect.DeepEqual(got, c.Expect.Events) {

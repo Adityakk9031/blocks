@@ -21,7 +21,7 @@ func usageFixture(t *testing.T, o Options) {
 		}
 		at := func(day, hour int) time.Time { return time.Date(2026, 10, day, hour, 0, 0, 0, time.UTC) }
 		for _, e := range []stats.Event{
-			{TS: at(1, 1), Kind: stats.KindScript, Session: "secret-session", Harness: "claude", FP: "private-fingerprint"},
+			{TS: at(1, 1), Kind: stats.KindScript, Session: "secret-session", Harness: "claude", FP: "private-fingerprint", Bytes: 700},
 			{TS: at(1, 2), Kind: stats.KindHint, Session: "secret-session", Harness: "claude", Block: "json-peek"},
 			{TS: at(1, 3), Kind: stats.KindHint, Session: "secret-session", Harness: "claude", Block: "json-peek"},
 			{TS: at(1, 4), Kind: stats.KindCall, Session: "secret-session", Harness: "claude", Block: "json-peek"},
@@ -71,7 +71,7 @@ func TestRollup(t *testing.T) {
 		t.Fatalf("rollup: %+v %s %v", events, through, err)
 	}
 	a, b := events[0], events[1]
-	if a.Day != "2026-10-01" || a.ReposActive != 2 || a.Sessions != 6 || a.Scripts != 2 || a.Hints != 6 ||
+	if a.Day != "2026-10-01" || a.ReposActive != 2 || a.Sessions != 6 || a.Scripts != 2 || a.ScriptsBytes != 1400 || a.Hints != 6 ||
 		a.HintsFollowed != 2 || a.PromoteHints != 2 || a.Calls != 8 || a.Runs != 6 || a.RunsFailed != 2 ||
 		a.RunsUser != 4 || a.BlocksUser != 1 || a.BlocksFirstParty != 1 || a.FirstPartyRuns["json-peek"] != 2 ||
 		a.VerifyPass != 2 || a.VerifyFail != 2 || a.BytesFull != 16200 || a.BytesReturned != 500 ||

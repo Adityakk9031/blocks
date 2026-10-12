@@ -52,6 +52,7 @@ type DailyCounts struct {
 	ReposActive      int            `json:"repos_active,omitempty"`
 	Sessions         int            `json:"sessions,omitempty"`
 	Scripts          int            `json:"scripts,omitempty"`
+	ScriptsBytes     int            `json:"scripts_bytes,omitempty"`
 	Hints            int            `json:"hints,omitempty"`
 	HintsFollowed    int            `json:"hints_followed,omitempty"`
 	PromoteHints     int            `json:"promote_hints,omitempty"`
