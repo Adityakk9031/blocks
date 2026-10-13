@@ -210,6 +210,33 @@ func TestInstallFile(t *testing.T) {
 	}
 }
 
+// rc4Windows is the command v0.1.0-rc.4 wrote on Windows: the installed copy had no .exe.
+const rc4Windows = `'C:\Users\X\.local\share\caveman-blocks\bin\caveman-blocks' hook --harness claude`
+
+// TestInstallReplacesRC4WindowsEntry: an install over a settings file holding rc.4's extensionless
+// Windows entry leaves exactly one entry of ours, status reads either spelling, uninstall removes both.
+func TestInstallReplacesRC4WindowsEntry(t *testing.T) {
+	f, _ := For("claude-settings")
+	path := filepath.Join(t.TempDir(), "settings.json")
+	old := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":` + string(marshal(rc4Windows)) + `,"timeout":5}]}]}}`
+	os.WriteFile(path, []byte(old), 0o600)
+
+	if ok, got, err := f.Status(path); err != nil || !ok || got != `C:\Users\X\.local\share\caveman-blocks\bin\caveman-blocks` {
+		t.Fatalf("status of the rc.4 entry: %v %q %v", ok, got, err)
+	}
+	c, err := f.Install(path, bin)
+	mustChange(t, true, c, err)
+	b, _ := os.ReadFile(path)
+	if n := strings.Count(string(b), "hook --harness claude"); n != 1 || strings.Contains(string(b), `C:`) {
+		t.Fatalf("want exactly one entry and no rc.4 one; got %d in\n%s", n, b)
+	}
+
+	os.WriteFile(path, []byte(old), 0o600)
+	c, err = f.Uninstall(path)
+	mustChange(t, true, c, err)
+	expect(t, path, []byte("{}\n"))
+}
+
 // TestMarker pins which commands uninstall treats as ours: only what entries writes.
 func TestMarker(t *testing.T) {
 	ours := []string{
@@ -220,6 +247,12 @@ func TestMarker(t *testing.T) {
 		"'/Users/O'\\''Brien/bin/caveman-blocks' hook --harness claude",
 		`C:\Users\me\caveman-blocks.exe hook --harness claude`,
 		`'C:\Program Files\cb\caveman-blocks.exe' hook --harness claude`,
+		`'C:\Users\Jane Doe\.local\share\caveman-blocks\bin\caveman-blocks.exe' hook --harness cursor --phase post`,
+		`'C:\Users\O'\''Brien\bin\caveman-blocks.exe' hook --harness claude`,
+		// v0.1.0-rc.4 wrote the Windows copy without .exe; those entries are still ours.
+		rc4Windows,
+		`'C:\Users\Jane Doe\.local\share\caveman-blocks\bin\caveman-blocks' hook --harness claude`,
+		`d:\caveman-blocks hook --harness codex`,
 	}
 	notOurs := []string{
 		"caveman-blocks hook --harness claude",                     // relative: a user's own entry
@@ -229,6 +262,14 @@ func TestMarker(t *testing.T) {
 		"/opt/cb/caveman-blocks hook --harness claude && say done", // a wrapper
 		"/opt/cb/caveman-blocks hook --harness claude --phase mid",
 		"/opt/cb/caveman-blocks.exe hook --harness claude", // .exe only after a backslash
+		`C:\Users\me\caveman-blocks.cmd hook --harness claude`,
+		`C:\Users\me\caveman-blocks.exe.bak hook --harness claude`,
+		`C:\Users\me\my-caveman-blocks.exe hook --harness claude`,
+		`Users\me\caveman-blocks.exe hook --harness claude`,                       // no drive: not absolute
+		`'C:\Users\me\wrap.cmd' 'C:\cb\caveman-blocks.exe' hook --harness claude`, // a user's wrapper
+		`'C:\cb\caveman-blocks.exe' hook --harness claude; echo done`,
+		`cmd /c 'C:\cb\caveman-blocks.exe' hook --harness claude`,
+		`"C:\cb\caveman-blocks.exe" hook --harness claude`, // quote writes single quotes only
 		"bash -c '/opt/cb/caveman-blocks hook --harness claude'",
 		"/opt/cb/caveman-blocks run json-peek",
 	}

@@ -119,8 +119,9 @@ the agent's command. Internal errors go to `hook.log` and the decision is empty.
 then. Configured timeouts are 5 seconds everywhere; the engine's own budget is 30 ms for a full decision
 and 5 ms for rule 1.
 
-`hooks install` copies the binary to `~/.local/share/caveman-blocks/bin/caveman-blocks` and writes that
-absolute path into the harness configuration. It refuses to write a path under an npm or npx cache,
+`hooks install` copies the binary to `~/.local/share/caveman-blocks/bin/caveman-blocks` (`caveman-blocks.exe`
+on Windows) and writes that absolute path into the harness configuration: `settings.json` under
+`$CLAUDE_CONFIG_DIR` when set, else `~/.claude`; `hooks.json` under `$CODEX_HOME` when set, else `~/.codex`. It refuses to write a path under an npm or npx cache,
 which is garbage collected and would leave a dangling hook. `init`, `sync` and `doctor` compare the
 copy's version with the invoking binary and refresh it by writing a temp file and renaming, never in
 place, so a running hook is not disturbed. `doctor` reports version skew and a path that no longer

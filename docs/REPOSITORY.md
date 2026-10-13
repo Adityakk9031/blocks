@@ -10,7 +10,7 @@
 | Tests | `go test` with golden tables; `testscript` for CLI end-to-end; Python `unittest` fixtures for blocks | Hermetic, fast, readable diffs |
 | Lint | `gofmt`, `go vet` (`make lint`) | Standard |
 | Release | GoReleaser: GitHub releases with checksums, `homebrew_casks` (skipped for prereleases); hand-written `install.sh`; npm shim plus per-platform packages published by CI, prereleases under the `next` tag. macOS signing and notarization are NOT configured yet; until they are, Homebrew users will hit Gatekeeper and the cask is not published | Decision 0007 |
-| CI | GitHub Actions: `test`, `lint`, `e2e`, `bench-hook`, `blocks-test`, `blocks-verify` on macOS and Linux. No Windows job in v0; the binary cross-compiles but is untested there | Hook budget enforced in CI |
+| CI | GitHub Actions: `test`, `lint`, `e2e`, `bench-hook`, `blocks-test`, `blocks-verify` on macOS and Linux. On Windows a `windows` job vets, builds and runs `scripts/smoke-hooks.sh` (hooks install, status, uninstall under Git Bash); the Go test suite and the Python blocks are not run there | Hook budget enforced in CI |
 | Docs | Markdown in `docs/`, decision records in `docs/decisions/` | Rationale next to code |
 
 Not used: a model API, embeddings, tree-sitter, a database, a daemon, a network library (`net/http` stays

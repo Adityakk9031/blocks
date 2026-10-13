@@ -172,12 +172,11 @@ func executable() (string, error) {
 // newer (docs/HOOK.md, failure policy). An installed copy whose version is not semver is replaced;
 // dev builds, non-semver builds and cache paths never replace anything.
 func refreshBinary() (string, bool) {
-	home := repo.BinaryHome()
+	installed := repo.BinaryPath()
 	mine, ok := semver(version)
-	if home == "" || !ok || strings.Contains(version, "dev") {
+	if installed == "" || !ok || strings.Contains(version, "dev") {
 		return "", false
 	}
-	installed := filepath.Join(home, "caveman-blocks")
 	if _, err := os.Stat(installed); err != nil {
 		return "", false
 	}

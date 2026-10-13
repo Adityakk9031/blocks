@@ -1,11 +1,13 @@
 # One table per harness (docs/INTEGRATION.md, layer 3). Facts from docs/research/harness-hooks-2026-10-03.md.
 # `hooks install`, `hooks uninstall` and `hooks status` read this: config file, format, events, timeout.
+# A path may start with ${VAR:-default}: the harness's own config-dir variable when set, else default.
+# OpenCode has none: OPENCODE_CONFIG_DIR adds a directory, it does not move ~/.config/opencode.
 
 [claude-code]
 phase = 1
 dialect = "claude"
-detect = ["~/.claude"]
-config = "~/.claude/settings.json"
+detect = ["${CLAUDE_CONFIG_DIR:-~/.claude}"]
+config = "${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json"
 config_format = "claude-settings"
 pre_event = { name = "PreToolUse", matcher = "Bash" }
 post_event = {}
@@ -15,8 +17,8 @@ trust_note = "Hooks run after the folder is trusted in an interactive session."
 [codex]
 phase = 1
 dialect = "claude"
-detect = ["~/.codex"]
-config = "~/.codex/hooks.json"
+detect = ["${CODEX_HOME:-~/.codex}"]
+config = "${CODEX_HOME:-~/.codex}/hooks.json"
 config_format = "codex-hooks"
 pre_event = { name = "PreToolUse", matcher = "Bash" }
 post_event = {}
