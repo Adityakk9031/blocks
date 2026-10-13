@@ -39,6 +39,28 @@ stdout '^claude-code: removed from ~/.claude/settings.json$'
 exec caveman-blocks hooks status
 stdout '^claude-code: not installed'
 
+# CLAUDE_CONFIG_DIR and CODEX_HOME move the harness's config; install, status and uninstall follow.
+env CLAUDE_CONFIG_DIR=$WORK/max5 CODEX_HOME=$WORK/codexhome
+mkdir max5
+rm home/.claude
+exec caveman-blocks hooks install
+stdout '^claude-code: installed in .*/max5/settings.json$'
+! stdout codex
+grep 'caveman-blocks hook --harness claude' max5/settings.json
+! exists home/.claude
+exec caveman-blocks hooks install --harness codex
+stdout '^codex: installed in .*/codexhome/hooks.json$'
+exists codexhome/hooks.json
+exec caveman-blocks hooks status --json
+stdout '"name":"claude-code","installed":true,.*"config":".*/max5/settings.json"'
+stdout '"name":"codex","installed":true,.*"config":".*/codexhome/hooks.json"'
+exec caveman-blocks hooks uninstall
+stdout '^claude-code: removed from .*/max5/settings.json$'
+stdout '^codex: removed from .*/codexhome/hooks.json$'
+! grep 'caveman-blocks' max5/settings.json
+! exists home/.claude
+env CLAUDE_CONFIG_DIR= CODEX_HOME=
+
 # A binary running from an npx cache would leave a dangling hook.
 cpbin _npx/caveman-blocks
 ! exec $WORK/_npx/caveman-blocks hooks install

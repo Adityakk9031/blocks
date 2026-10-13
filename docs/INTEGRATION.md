@@ -60,8 +60,8 @@ A profile is data, embedded in the binary as `internal/hook/profiles.toml`, one 
 [claude-code]
 phase = 1
 dialect = "claude"
-detect = ["~/.claude"]
-config = "~/.claude/settings.json"
+detect = ["${CLAUDE_CONFIG_DIR:-~/.claude}"]   # a leading ${VAR:-default}: the variable when set
+config = "${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json"
 config_format = "claude-settings"          # how to merge our entry into the file
 pre_event = { name = "PreToolUse", matcher = "Bash" }
 post_event = {}                             # empty: pre-run hint is enough
