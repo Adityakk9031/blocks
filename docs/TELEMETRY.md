@@ -104,7 +104,7 @@ Every event:
 | `install_channel` | string | `npx`, `brew`, `direct`, `source`; decided once, when the choice is saved |
 | `linked` | bool | the install ID is shared with the Caveman CLI |
 
-`first_run`: sent once per install ID, after the command that saved it. No further fields.
+`first_run`: sent once when telemetry starts under an install ID, by the process that saved it: after an interactive command, or, when telemetry starts under the Caveman CLI's notice, by whichever process enrolls first (the hook, or `hooks install` run by that CLI). No further fields.
 
 `command_run`: sent after each interactive command. Commands run by agents or scripts send none.
 

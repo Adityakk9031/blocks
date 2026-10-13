@@ -8,12 +8,20 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/caveman-ai/blocks/internal/telemetry"
 	"github.com/rogpeppe/go-internal/testscript"
 )
 
 // TestMain lets the test binary act as caveman-blocks when invoked under that name, so the
 // scenarios run the real CLI without a separate build.
+//
+// The unit tests' init stubs the detached flush. A scenario that names a test receiver
+// (CAVEMAN_BLOCKS_TELEMETRY_URL) gets the real one, so what a command spawns can be asserted;
+// without that override nothing is spawned, so no scenario can reach the documented receiver.
 func TestMain(m *testing.M) {
+	if filepath.Base(os.Args[0]) == "caveman-blocks" && os.Getenv("CAVEMAN_BLOCKS_TELEMETRY_URL") != "" {
+		spawnTelemetry = telemetry.Spawn
+	}
 	testscript.Main(m, map[string]func(){"caveman-blocks": main})
 }
 

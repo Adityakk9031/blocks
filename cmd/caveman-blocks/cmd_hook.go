@@ -103,7 +103,7 @@ func hookObserve() (sendable bool) {
 			sendable = false
 		}
 	}()
-	return telemetry.Observe(telemetryOptions()).Sendable
+	return observeTelemetry(true).Sendable
 }
 
 // hookFlush starts the detached flush at most once per 24 hours, after the answer is written. The

@@ -1,5 +1,6 @@
 # The Caveman CLI's disclosure (promptVersion 6) covers Blocks: the hook, with no terminal, enrolls
-# under the shared install ID without printing, and the Caveman CLI's opt-out stops it again.
+# under the shared install ID without printing and sends first_run once, and so does a hooks install
+# that CLI runs; the Caveman CLI's opt-out stops it again.
 [windows] skip 'fake curl is a POSIX shell fixture'
 env HOME=$WORK/home XDG_STATE_HOME=$WORK/state CAVEMAN_HOME=$WORK/cavehome
 env CI= DO_NOT_TRACK= CAVEMAN_BLOCKS_TELEMETRY= CAVEMAN_TELEMETRY=
@@ -31,6 +32,13 @@ cd ..
 grep '"enabled":true,"explicit":false' state/caveman-blocks/telemetry.json
 grep '"anonymous_id":"abcdef01-2345-4678-89ab-cdef01234567","linked":true' state/caveman-blocks/telemetry.json
 exists state/caveman-blocks/telemetry-attempt
+# The enrolling hook's detached flush sends first_run under the shared ID; a later hook sends none.
+exec sh wait-first-run.sh
+grep '"event":"first_run".*"anonymous_id":"abcdef01-2345-4678-89ab-cdef01234567"' payload.json
+cd repo
+stdin ../pre.json
+exec caveman-blocks hook --harness claude
+cd ..
 exec caveman-blocks telemetry status
 stdout '^on · covered by the Caveman CLI''s telemetry \(caveman telemetry off turns both off\)$'
 stdout '^shared with the Caveman CLI: yes$'
@@ -40,6 +48,7 @@ env CAVEMAN_BLOCKS_TELEMETRY_EVENTS='[{"schema":"blocks/v1","event":"command_run
 exec caveman-blocks telemetry flush
 grep '"anonymous_id":"abcdef01-2345-4678-89ab-cdef01234567"' payload.json
 grep '"linked":true' payload.json
+grep -count=1 '"event":"first_run"' payload.json
 rm payload.json
 
 # caveman telemetry off turns Blocks off at once.
@@ -48,6 +57,19 @@ exec caveman-blocks telemetry flush
 ! exists payload.json
 exec caveman-blocks telemetry status
 stdout '^off · the Caveman CLI opt-out$'
+
+# `caveman on scripts` runs hooks install with no terminal: it enrolls and sends first_run, once.
+env XDG_STATE_HOME=$WORK/state2 CAVEMAN_BLOCKS_TELEMETRY_EVENTS=
+cp hub-v6.json cavehome/cloud.json
+mkdir home/.claude
+exec caveman-blocks hooks install
+! stderr .
+grep '"enabled":true,"explicit":false' state2/caveman-blocks/telemetry.json
+exec sh wait-first-run.sh
+exec caveman-blocks hooks install
+exec caveman-blocks telemetry flush
+grep -count=1 '"event":"first_run"' payload.json
+! grep '"event":"command_run"' payload.json
 
 -- hub-v5.json --
 {"telemetry":{"enabled":true,"decidedAt":"2026-10-01T00:00:00Z","promptVersion":5,"anonymousId":"ABCDEF01-2345-4678-89AB-CDEF01234567"}}
@@ -59,12 +81,20 @@ stdout '^off · the Caveman CLI opt-out$'
 {"telemetry":{"enabled":true,"decidedAt":"2026-10-01T00:00:00Z","promptVersion":5,"anonymousId":"12345678-1234-4123-8123-123456789abc"}}
 -- pre.json --
 {"session_id":"e2e","hook_event_name":"PreToolUse","tool_use_id":"t1","tool_input":{"command":"ls"}}
+-- wait-first-run.sh --
+# Waits up to 10s for a detached flush to deliver first_run.
+i=0
+until grep -q '"event":"first_run"' "$CURL_PAYLOAD" 2>/dev/null; do
+  i=$((i + 1))
+  [ "$i" -gt 100 ] && exit 1
+  sleep 0.1
+done
 -- bin/curl --
 #!/bin/sh
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--data-binary" ]; then
     shift
-    printf '%s\n' "$1" > "$CURL_PAYLOAD"
+    printf '%s\n' "$1" >> "$CURL_PAYLOAD"
   fi
   shift
 done

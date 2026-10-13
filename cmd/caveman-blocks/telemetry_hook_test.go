@@ -81,6 +81,40 @@ func TestHookTelemetryCadenceAndHarness(t *testing.T) {
 	}
 }
 
+// A hook that enrolls under the Caveman CLI's notice sends first_run once; later calls do not.
+func TestHookEnrollSendsFirstRunOnce(t *testing.T) {
+	root := hookRepo(t)
+	o, _, calls := cliTelemetry(t)
+	hub := `{"telemetry":{"enabled":true,"decidedAt":"2026-10-02T00:00:00Z","promptVersion":6,"anonymousId":"abcdef01-2345-4678-89ab-cdef01234567"}}`
+	if err := os.MkdirAll(filepath.Join(o.Home, ".caveman"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(o.Home, ".caveman", "cloud.json"), []byte(hub), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	firstRuns := func() (n int) {
+		for _, events := range *calls {
+			for _, e := range events {
+				if e.Event == "first_run" {
+					n++
+				}
+			}
+		}
+		return n
+	}
+	for i := range 2 {
+		if _, sendable := hookAnswer("claude", "", hookPayload("s", root, "ls"), o.Now); !sendable {
+			t.Fatalf("call %d: not sendable", i)
+		}
+		if n := firstRuns(); n != 1 {
+			t.Fatalf("call %d: %d first_run events: %+v", i, n, *calls)
+		}
+	}
+	if e := (*calls)[0][0]; e.AnonymousID != "abcdef01-2345-4678-89ab-cdef01234567" || !e.Linked {
+		t.Fatalf("first_run identity: %+v", e)
+	}
+}
+
 // Outside a repo and on a post-run call the hook does no telemetry work at all.
 func TestHookTelemetryAbsentOutsideAndPost(t *testing.T) {
 	root, o, _, _ := hookTelemetryFixture(t, true)

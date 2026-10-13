@@ -112,6 +112,18 @@ func (t *commandTelemetry) end(c *cobra.Command, exit int) {
 	}
 }
 
+// observeTelemetry is telemetry.Observe plus the first_run of an install this process started under
+// the Caveman CLI's notice (the hook, hooks install run by that CLI). An interactive command passes
+// sendFirstRun false: its end() already sends first_run when the install ID changed.
+func observeTelemetry(sendFirstRun bool) telemetry.Decision {
+	o := telemetryOptions()
+	d := telemetry.Observe(o)
+	if d.Enrolled && sendFirstRun {
+		spawnTelemetry([]telemetry.Event{telemetry.NewEvent(o, d.State, "first_run")})
+	}
+	return d
+}
+
 func attachTelemetry(root *cobra.Command, t *commandTelemetry) {
 	ctx := root.Context()
 	if ctx == nil {
