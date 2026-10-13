@@ -24,3 +24,17 @@ jobs:
       - run: go run ./cmd/caveman-blocks lint .blocks && go run ./cmd/caveman-blocks verify --check --all --policy-ref origin/main && go run ./cmd/caveman-blocks sync --check
       - run: make e2e
       - run: make bench-hook
+  # The Go tests and make targets assume unix paths and sh; on Windows the binary is built, vetted and
+  # driven through hooks install, status and uninstall in Git Bash, the shell Claude Code runs hooks in.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: go vet ./...
+      - run: go test ./internal/hook/install ./internal/hook -run "TestMarker|TestProfile"
+      - run: go test ./internal/repo -run TestBinaryName
+      - run: go build -o bin/caveman-blocks.exe ./cmd/caveman-blocks
+      - run: scripts/smoke-hooks.sh "$PWD/bin/caveman-blocks.exe"
+        shell: bash
