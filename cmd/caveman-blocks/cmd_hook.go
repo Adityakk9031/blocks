@@ -17,6 +17,7 @@ import (
 	"github.com/caveman-ai/blocks/internal/promote"
 	"github.com/caveman-ai/blocks/internal/repo"
 	"github.com/caveman-ai/blocks/internal/stats"
+	"github.com/caveman-ai/blocks/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -39,9 +40,13 @@ func hookCmd() *cobra.Command {
 				os.Exit(0)
 			}()
 			stdin, _ := io.ReadAll(io.LimitReader(os.Stdin, hookMaxInput))
-			answer(hookAnswer(harness, phase, stdin, time.Now))
-			// A daily prune started by hookAnswer finishes after the answer, or is abandoned when
-			// the watchdog exits.
+			b, sendable := hookAnswer(harness, phase, stdin, time.Now)
+			answer(b)
+			// The answer is written. The rest finishes after it or is abandoned when the watchdog
+			// exits: telemetry's once-a-day flush, and a daily prune started by hookAnswer.
+			if sendable {
+				hookFlush()
+			}
 			hookBackground.Wait()
 		},
 	}
@@ -88,12 +93,35 @@ func emptyAnswer(harness, phase string) []byte {
 	return render(d, protocol.Allow(""), phase)
 }
 
+// hookObserve is run on a pre-run call inside a repo before the hook counts anything: it reads the
+// saved choice and marks the day when a switch or a choice has telemetry off (docs/TELEMETRY.md), so
+// even a hook that is killed cannot leave an off day unmarked. It reports whether a flush may be
+// started and never fails the hook.
+func hookObserve() (sendable bool) {
+	defer func() {
+		if recover() != nil {
+			sendable = false
+		}
+	}()
+	return telemetry.Observe(telemetryOptions()).Sendable
+}
+
+// hookFlush starts the detached flush at most once per 24 hours, after the answer is written. The
+// hook itself opens no connection.
+func hookFlush() {
+	defer func() { _ = recover() }()
+	if o := telemetryOptions(); telemetry.TouchAttempt(o.Base, o.Now()) {
+		spawnTelemetry(nil)
+	}
+}
+
 // hookAnswer turns one harness payload into the harness's answer. Every failure, panics included,
-// becomes the dialect's empty answer; internal errors go to <stateDir>/hook.log.
-func hookAnswer(harness, phase string, stdin []byte, now func() time.Time) (out []byte) {
+// becomes the dialect's empty answer; internal errors go to <stateDir>/hook.log. sendable reports a
+// pre-run call inside a repo with telemetry on: the caller may start the daily flush.
+func hookAnswer(harness, phase string, stdin []byte, now func() time.Time) (out []byte, sendable bool) {
 	d, ok := dialects[harness]
 	if !ok {
-		return []byte("{}\n")
+		return []byte("{}\n"), false
 	}
 	if phase == "" {
 		phase = hook.PhasePre
@@ -108,7 +136,7 @@ func hookAnswer(harness, phase string, stdin []byte, now func() time.Time) (out 
 
 	req, err := d.parse(stdin)
 	if err != nil {
-		return render(d, protocol.Allow(""), phase)
+		return render(d, protocol.Allow(""), phase), false
 	}
 	if req.Phase == "" {
 		req.Phase = phase
@@ -120,10 +148,10 @@ func hookAnswer(harness, phase string, stdin []byte, now func() time.Time) (out 
 	// Rule 1 and its 5 ms budget: nothing else is loaded outside a repo.
 	root, ok := repo.FindRoot(req.Cwd)
 	if !ok {
-		return render(d, protocol.Allow(""), phase)
+		return render(d, protocol.Allow(""), phase), false
 	}
 	if stateDir, err = repo.StateDir(root); err != nil {
-		return render(d, protocol.Allow(""), phase)
+		return render(d, protocol.Allow(""), phase), false
 	}
 	cfg := hook.Config{RepoRoot: root, StateDir: stateDir}
 	if req.Phase == hook.PhasePre { // post only replays the cache (rule 0)
@@ -135,16 +163,17 @@ func hookAnswer(harness, phase string, stdin []byte, now func() time.Time) (out 
 				repo.Prune(stateDir, now())
 			}()
 		}
+		sendable = hookObserve()
 	}
 	deps := hook.DefaultDeps(stateDir)
 	deps.Log = func(err error) { hookLog(stateDir, err, now()) }
 	dec := hook.Decide(cfg, hook.Input{Phase: req.Phase, Command: req.Command, Cwd: req.Cwd, Session: req.Session, CallID: req.CallID}, deps)
 	for _, e := range dec.Events {
-		if err := stats.Append(stateDir, stats.Event{TS: e.TS, Session: e.Session, Kind: e.Kind, Block: e.Block, FP: e.FP, OK: e.OK, Lines: e.Lines}); err != nil {
+		if err := stats.Append(stateDir, stats.Event{TS: e.TS, Session: e.Session, Harness: harness, Kind: e.Kind, Block: e.Block, FP: e.FP, OK: e.OK, Lines: e.Lines, Bytes: e.Bytes}); err != nil {
 			hookLog(stateDir, err, now())
 		}
 	}
-	return render(d, protocol.Allow(dec.Hint), phase)
+	return render(d, protocol.Allow(dec.Hint), phase), sendable
 }
 
 // hookConfig builds the engine's view of the repo: indexed blocks with compiled patterns, the fps

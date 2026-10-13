@@ -18,7 +18,7 @@ jobs:
 ```
 
 No secrets. The policy for `allow_effects` comes from the base branch, so a pull request cannot grant
-itself `network` or `external`.
+itself `network` or `external`. [Telemetry](TELEMETRY.md) is always off when `CI` is set.
 
 | Situation | `verify --check` result |
 |---|---|

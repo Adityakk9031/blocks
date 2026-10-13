@@ -90,7 +90,7 @@ Run it in your repo, then commit `.blocks/` and `AGENTS.md`. Everyone who clones
 <summary><strong>More</strong>: see your waste first, add blocks, hints in your agent, plugins, CI, uninstall</summary>
 
 ```bash
-npx caveman-blocks scan               # what your agents retyped this month. Nothing leaves your machine
+npx caveman-blocks scan               # what your agents retyped this month. Script text never leaves your machine
 npx caveman-blocks add json-peek      # copy a first-party block in. You own it now
 npx caveman-blocks hooks install      # once per machine: hints in Claude Code, Codex, Cursor and OpenCode
 claude plugin marketplace add caveman-ai/blocks && claude plugin install caveman-blocks@caveman-blocks   # Claude Code, as a plugin
@@ -146,6 +146,7 @@ Measured: 94407 shell commands, 11726 inline Python scripts, 1855 shapes. Not gr
 | `promote` | The brief that turns a repeated script into a block |
 | `lint` · `verify` · `sync` | Check it, run its example and stamp it, rebuild the index. `--check` for CI |
 | `stats` | Scripts captured, hints followed, block calls. Counted, local |
+| `telemetry off` | Usage counts off for good. `status` shows what is on and why |
 
 First-party blocks, Python standard library only: `json-peek` · `jsonl-stats` · `test-summary` · `first-error` · `wait-for` · `grep-defs` · `http-json` · `replace-in-file`. [What each returns](blocks/README.md). `export` wraps them as `SKILL.md` for agents that read skills.
 
@@ -153,7 +154,9 @@ Not yet: Python only, no sandbox, and the Codex and Cursor hooks haven't run in 
 
 ## Privacy, license, cite
 
-Runs on your machine, sends nothing. No telemetry, no model calls, and the CLI makes no network calls. Blocks stay in your repo; captured scripts are scrubbed of secrets and kept outside it. [Trust boundary](docs/ARCHITECTURE.md).
+Blocks is free. It stays free because we can show it gets used, so the CLI sends usage counts by default: commands run, hints shown and followed, block runs, a random install ID, OS and IP address. Never your scripts, file paths, repo names or the names of blocks you wrote. Turn it off for good with `caveman-blocks telemetry off`; `DO_NOT_TRACK=1` is honored too. [Everything that is sent](docs/TELEMETRY.md).
+
+No model calls. Blocks stay in your repo; captured scripts are scrubbed of secrets and kept outside it. [Trust boundary](docs/ARCHITECTURE.md).
 
 [Apache-2.0](./LICENSE). Fork it, ship it, put it in your monorepo. "Caveman" and the rock logo are trademarks; see [TRADEMARKS.md](TRADEMARKS.md).
 

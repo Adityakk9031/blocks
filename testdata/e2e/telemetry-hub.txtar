@@ -1,0 +1,70 @@
+# The Caveman CLI's disclosure (promptVersion 6) covers Blocks: the hook, with no terminal, enrolls
+# under the shared install ID without printing, and the Caveman CLI's opt-out stops it again.
+[windows] skip 'fake curl is a POSIX shell fixture'
+env HOME=$WORK/home XDG_STATE_HOME=$WORK/state CAVEMAN_HOME=$WORK/cavehome
+env CI= DO_NOT_TRACK= CAVEMAN_BLOCKS_TELEMETRY= CAVEMAN_TELEMETRY=
+env CAVEMAN_BLOCKS_TELEMETRY_EVENTS= CAVEMAN_BLOCKS_TELEMETRY_URL=https://example.invalid/telemetry-test
+exec chmod +x bin/curl
+env PATH=$WORK/bin:$PATH CURL_PAYLOAD=$WORK/payload.json
+
+exec git init -q repo
+cd repo
+exec caveman-blocks init
+cd ..
+! exists state/caveman-blocks/telemetry.json
+
+# The legacy file (another ID) is not read once cloud.json exists, and a promptVersion 5 yes starts nothing.
+mkdir cavehome
+cp hub-v5.json cavehome/cloud.json
+cd repo
+stdin ../pre.json
+exec caveman-blocks hook --harness claude
+cd ..
+! exists state/caveman-blocks/telemetry.json
+
+cp hub-v6.json cavehome/cloud.json
+cd repo
+stdin ../pre.json
+exec caveman-blocks hook --harness claude
+! stderr .
+cd ..
+grep '"enabled":true,"explicit":false' state/caveman-blocks/telemetry.json
+grep '"anonymous_id":"abcdef01-2345-4678-89ab-cdef01234567","linked":true' state/caveman-blocks/telemetry.json
+exists state/caveman-blocks/telemetry-attempt
+exec caveman-blocks telemetry status
+stdout '^on · covered by the Caveman CLI''s telemetry \(caveman telemetry off turns both off\)$'
+stdout '^shared with the Caveman CLI: yes$'
+
+# What it sends leaves under the shared ID.
+env CAVEMAN_BLOCKS_TELEMETRY_EVENTS='[{"schema":"blocks/v1","event":"command_run","ts":"2026-10-03T12:00:00Z","anonymous_id":"deadbeef-dead-4ead-8ead-deadbeefdead","cli_version":"9.9.9","os":"plan9","arch":"mips","install_channel":"brew","linked":false,"command":"stats","duration_ms":1,"exit_class":"ok"}]'
+exec caveman-blocks telemetry flush
+grep '"anonymous_id":"abcdef01-2345-4678-89ab-cdef01234567"' payload.json
+grep '"linked":true' payload.json
+rm payload.json
+
+# caveman telemetry off turns Blocks off at once.
+cp hub-off.json cavehome/cloud.json
+exec caveman-blocks telemetry flush
+! exists payload.json
+exec caveman-blocks telemetry status
+stdout '^off · the Caveman CLI opt-out$'
+
+-- hub-v5.json --
+{"telemetry":{"enabled":true,"decidedAt":"2026-10-01T00:00:00Z","promptVersion":5,"anonymousId":"ABCDEF01-2345-4678-89AB-CDEF01234567"}}
+-- hub-v6.json --
+{"telemetry":{"enabled":true,"decidedAt":"2026-10-01T00:00:00Z","promptVersion":6,"anonymousId":"ABCDEF01-2345-4678-89AB-CDEF01234567"}}
+-- hub-off.json --
+{"telemetry":{"enabled":false,"decidedAt":"2026-10-02T00:00:00Z","promptVersion":6}}
+-- home/.caveman-cloud/config.json --
+{"telemetry":{"enabled":true,"decidedAt":"2026-10-01T00:00:00Z","promptVersion":5,"anonymousId":"12345678-1234-4123-8123-123456789abc"}}
+-- pre.json --
+{"session_id":"e2e","hook_event_name":"PreToolUse","tool_use_id":"t1","tool_input":{"command":"ls"}}
+-- bin/curl --
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--data-binary" ]; then
+    shift
+    printf '%s\n' "$1" > "$CURL_PAYLOAD"
+  fi
+  shift
+done

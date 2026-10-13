@@ -1,0 +1,391 @@
+// Package telemetry sends the fixed usage contract in docs/TELEMETRY.md through the system curl.
+// Environment reads are injected; no network library is linked into the hook binary.
+package telemetry
+
+import (
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/caveman-ai/blocks/internal/repo"
+)
+
+// DisclosureVersion identifies the disclosure required before any event can be sent. Raising it
+// stops every install saved under a lower one from sending; the command lifecycle must then reprint
+// the disclosure and save the new version, which nothing does yet.
+const DisclosureVersion = 1
+
+// Disclosure is the documented, verbatim first-interactive-command notice.
+const Disclosure = "usage counts on · commands, hints shown and followed, block runs, a random install ID, OS and your IP address · never scripts, file paths, repo names or names of blocks you wrote · this is what keeps Blocks free · off: caveman-blocks telemetry off · https://github.com/caveman-ai/blocks/blob/main/docs/TELEMETRY.md"
+
+// HubPromptVersion is the first Caveman CLI disclosure (its saved promptVersion) that names Blocks'
+// counts. A yes saved under it covers Blocks too: one notice, one opt-out for both (decision 0011).
+const HubPromptVersion = 6
+
+// HubReason is the status reason while a default follows the Caveman CLI's yes.
+const HubReason = "covered by the Caveman CLI's telemetry (caveman telemetry off turns both off)"
+
+// DefaultURL is the documented receiver; only CAVEMAN_BLOCKS_TELEMETRY_URL overrides it.
+const DefaultURL = "https://xvfgtprkhzlvegvmeefq.supabase.co/functions/v1/blocks-telemetry"
+
+// Options supplies process inputs. Tests provide paths, a clock and getenv without real env reads.
+type Options struct {
+	Base, Home, Executable, Version string
+	FirstParty                      []string
+	Getenv                          func(string) string
+	Now                             func() time.Time
+}
+
+// System resolves process inputs without reading or writing telemetry state.
+func System(version string, firstParty []string) Options {
+	base, _ := repo.StateBase()
+	home, _ := os.UserHomeDir()
+	exe, _ := os.Executable()
+	return Options{Base: base, Home: home, Executable: exe, Version: version,
+		FirstParty: firstParty, Getenv: os.Getenv, Now: time.Now}
+}
+
+func (o Options) env(key string) string {
+	if o.Getenv == nil {
+		return ""
+	}
+	return o.Getenv(key)
+}
+
+func (o Options) now() time.Time {
+	if o.Now == nil {
+		return time.Now().UTC()
+	}
+	return o.Now().UTC()
+}
+
+// Endpoint returns the documented destination, or a valid CAVEMAN_BLOCKS_TELEMETRY_URL. An override
+// that is not https (or plain http to this machine, for tests) yields "": nothing is sent, rather
+// than sent somewhere the override did not name or handed to curl as an option.
+func (o Options) Endpoint() string {
+	raw := o.env("CAVEMAN_BLOCKS_TELEMETRY_URL")
+	if raw == "" {
+		return DefaultURL
+	}
+	// No whitespace, and none of curl's URL glob characters (curl also runs with --globoff).
+	if strings.ContainsAny(raw, " \t\r\n{}[]") {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil {
+		return "" // user:password@ can hide the real host behind a harmless-looking prefix
+	}
+	local := u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost"
+	if u.Scheme == "https" || u.Scheme == "http" && local {
+		return raw
+	}
+	return ""
+}
+
+// State is the local telemetry.json choice, separate from the wire Event.
+type State struct {
+	Enabled        bool   `json:"enabled"`
+	Explicit       bool   `json:"explicit"`
+	DecidedAt      string `json:"decided_at"`
+	Disclosure     int    `json:"disclosure"`
+	AnonymousID    string `json:"anonymous_id,omitempty"`
+	Linked         bool   `json:"linked"`
+	InstallChannel string `json:"install_channel"`
+}
+
+// Decision reports the effective control and whether the saved disclosure and ID permit sending.
+type Decision struct {
+	Status, Reason string
+	State          State
+	Saved, EnvOff  bool
+	Sendable       bool
+	// HubCovered: nothing is started yet, Blocks has no explicit choice, and the Caveman CLI's yes was
+	// given under a disclosure that names Blocks, so Enroll may save the linked default silently.
+	HubCovered bool
+}
+
+// EnvOff names the environment switch that has telemetry off for this process, or "".
+func EnvOff(getenv func(string) string) string {
+	if v := getenv("DO_NOT_TRACK"); v != "" && v != "0" {
+		return "DO_NOT_TRACK"
+	}
+	if switchOff(getenv("CAVEMAN_BLOCKS_TELEMETRY")) {
+		return "CAVEMAN_BLOCKS_TELEMETRY"
+	}
+	if switchOff(getenv("CAVEMAN_TELEMETRY")) {
+		return "CAVEMAN_TELEMETRY"
+	}
+	if v := getenv("CI"); v != "" && v != "0" && !strings.EqualFold(v, "false") {
+		return "CI"
+	}
+	return ""
+}
+
+// Decide applies the documented precedence without saving anything.
+func Decide(o Options) Decision {
+	s, saved, damaged := loadState(o.Base)
+	d := Decision{State: s, Saved: saved, Status: "off"}
+	if name := EnvOff(o.env); name != "" {
+		d.Reason, d.EnvOff = name, name != "CI" // CI is never saved as a choice
+	} else if damaged {
+		d.Reason = "an unreadable telemetry.json (run caveman-blocks telemetry on or off)"
+	} else if saved && s.Explicit {
+		d.Reason = "your choice"
+		if s.Enabled {
+			d.Status = "on"
+		}
+	} else if c := cavemanChoice(o); c.Enabled != nil && !*c.Enabled {
+		d.Reason = "the Caveman CLI opt-out"
+	} else if saved {
+		d.Reason = "the default"
+		if s.Enabled {
+			d.Status = "on"
+			if s.Linked && hubCovers(o) {
+				d.Reason = HubReason
+			}
+		}
+	} else {
+		d.Status, d.Reason = "not started", "the default (awaiting an interactive command)"
+	}
+	// A shared ID is ours to use only while the Caveman CLI still holds it with telemetry on.
+	if d.Status == "on" && s.Linked && !linkHolds(o, s) {
+		d.Status, d.Reason = "not started", "the Caveman CLI retired the shared install ID (awaiting an interactive command)"
+	}
+	if d.Status == "not started" && !s.Explicit && hubCovers(o) {
+		d.HubCovered, d.Reason = true, HubReason+" · starts on the next caveman-blocks run"
+	}
+	d.Sendable = d.Status == "on" && saved && s.Enabled && validUUID(s.AnonymousID) && s.Disclosure >= DisclosureVersion
+	return d
+}
+
+// Observe decides and, when a switch or a choice has telemetry off, marks today off (NoteOff). Every
+// process that could count something calls it, so a day on which telemetry was seen off is never
+// sent, whatever its counts hold. CI is the exception: it keeps this process from sending and from
+// enrolling, but it is not the person's choice (some agent harnesses export it), so it marks nothing.
+// It returns the decision.
+func Observe(o Options) Decision {
+	d := Decide(o)
+	if d.Sendable {
+		return d
+	}
+	if d.Reason == "CI" {
+		// CI is reported first; look behind it, so it never hides a switch or a choice that is off.
+		behind := o
+		behind.Getenv = func(k string) string {
+			if k == "CI" {
+				return ""
+			}
+			return o.env(k)
+		}
+		if Decide(behind).Sendable {
+			return d
+		}
+	}
+	NoteOff(o.Base, o.now())
+	if d.HubCovered && Enroll(o) {
+		return Decide(o)
+	}
+	return d
+}
+
+// Enroll saves the linked default without printing anything when the Caveman CLI's disclosure covers
+// Blocks (Decision.HubCovered). Any process may call it, the hook and commands without a terminal
+// included: that CLI printed the notice. decided_at is now, so nothing counted before is sent. It
+// never mints an ID of its own: should the link stop holding before the save, nothing is saved.
+func Enroll(o Options) bool {
+	if !Decide(o).HubCovered {
+		return false
+	}
+	s, err := saveChoice(o, true, false, true)
+	return err == nil && s.Linked
+}
+
+// HubWouldCover reports whether, but for an environment switch, Enroll would start this install
+// under the Caveman CLI's yes. A hook launched without that switch (a GUI app) would then enroll.
+func HubWouldCover(o Options) bool {
+	bare := o
+	bare.Getenv = func(k string) string {
+		switch k {
+		case "DO_NOT_TRACK", "CAVEMAN_BLOCKS_TELEMETRY", "CAVEMAN_TELEMETRY", "CI":
+			return ""
+		}
+		return o.env(k)
+	}
+	return Decide(bare).HubCovered
+}
+
+func switchOff(v string) bool {
+	if v == "" {
+		return false
+	}
+	v = strings.ToLower(strings.TrimSpace(v))
+	return v != "1" && v != "true" && v != "on"
+}
+
+// loadState reads telemetry.json. damaged means something is there that cannot be read as a choice:
+// it is never mistaken for "nothing decided", so the default is never written over it.
+func loadState(base string) (s State, saved, damaged bool) {
+	var file struct {
+		State
+		Enabled *bool `json:"enabled"`
+	}
+	b, err := readSafe(base, "telemetry.json")
+	if errors.Is(err, fs.ErrNotExist) {
+		return State{}, false, false
+	}
+	if err != nil || json.Unmarshal(b, &file) != nil || file.Enabled == nil {
+		return State{}, false, true
+	}
+	file.State.Enabled = *file.Enabled
+	return file.State, true, false
+}
+
+// linkHolds reports whether the Caveman CLI still has telemetry on under the ID we share with it.
+func linkHolds(o Options, s State) bool {
+	c := cavemanChoice(o)
+	return c.Enabled != nil && *c.Enabled && strings.EqualFold(c.AnonymousID, s.AnonymousID)
+}
+
+type cavemanTelemetry struct {
+	Enabled       *bool  `json:"enabled"`
+	DecidedAt     string `json:"decidedAt"`
+	PromptVersion int    `json:"promptVersion"`
+	AnonymousID   string `json:"anonymousId"`
+}
+
+// hubCovers reports a Caveman CLI yes given under a disclosure that names Blocks, with a usable ID.
+func hubCovers(o Options) bool {
+	c := cavemanChoice(o)
+	return c.Enabled != nil && *c.Enabled && c.PromptVersion >= HubPromptVersion && validUUID(c.AnonymousID)
+}
+
+// cavemanChoice reads the Caveman CLI's telemetry decision the way that CLI does. Its config is
+// $CAVEMAN_HOME/cloud.json (default ~/.caveman/cloud.json); when that file exists it is the authority,
+// and one that cannot be read is no choice at all, never a reason to trust the old file. Only without
+// it is ~/.caveman-cloud/config.json (older CLIs) read. An opt-out found in the old file holds either
+// way, as it does for that CLI: an older one still on PATH writes its `off` there only.
+func cavemanChoice(o Options) cavemanTelemetry {
+	home := o.env("CAVEMAN_HOME")
+	if home == "" {
+		home = filepath.Join(o.Home, ".caveman")
+	}
+	current, err := readChoice(home, "cloud.json")
+	legacy, legacyErr := readChoice(o.Home, ".caveman-cloud/config.json")
+	if legacyErr == nil && legacy.Enabled != nil && !*legacy.Enabled {
+		return legacy
+	}
+	// Exists means the name is there at all: a dangling symlink is a cloud.json that cannot be read.
+	if _, lerr := os.Lstat(filepath.Join(home, "cloud.json")); errors.Is(err, fs.ErrNotExist) && lerr != nil {
+		return legacy
+	}
+	return current
+}
+
+// readChoice reads one Caveman CLI config. Any error but a missing file comes back with an empty choice.
+func readChoice(base, name string) (cavemanTelemetry, error) {
+	var c struct {
+		Telemetry cavemanTelemetry `json:"telemetry"`
+	}
+	// That CLI's own file, not our state: it supports a symlinked config, so follow it.
+	b, err := readUser(base, name)
+	if err != nil {
+		return cavemanTelemetry{}, err
+	}
+	if json.Unmarshal(b, &c) != nil || c.Telemetry.Enabled == nil || c.Telemetry.DecidedAt == "" {
+		return cavemanTelemetry{}, nil
+	}
+	return c.Telemetry, nil
+}
+
+var errNoLink = errors.New("telemetry: the Caveman CLI no longer shares an install ID")
+
+// SaveChoice atomically saves an explicit on/off or the disclosed default. Off always removes the
+// ID and link. An existing on ID and channel survive repeated on commands. A default never replaces
+// an explicit choice: that is returned as saved, unwritten.
+func SaveChoice(o Options, enabled, explicit bool) (State, error) {
+	return saveChoice(o, enabled, explicit, false)
+}
+
+// saveChoice is SaveChoice; linkOnly (Enroll) saves only under the Caveman CLI's current ID and
+// otherwise fails with errNoLink, never minting one. The read-modify-write holds the state lock.
+func saveChoice(o Options, enabled, explicit, linkOnly bool) (State, error) {
+	unlock, err := lockState(o.Base)
+	if err != nil {
+		return State{}, err
+	}
+	defer unlock()
+	s, _, _ := loadState(o.Base)
+	if !explicit && s.Explicit {
+		return s, nil
+	}
+	if linkOnly && !hubCovers(o) {
+		return State{}, errNoLink
+	}
+	if s.Linked && !linkHolds(o, s) {
+		s.AnonymousID, s.Linked = "", false // the Caveman CLI retired that ID; never keep using it
+	}
+	// decided_at is when telemetry last started; rollup sends nothing from before it. It stays put
+	// only when the same choice is saved again while telemetry is on: off for any reason, or a
+	// default turned into an explicit yes (which stops following the Caveman CLI), it restarts now.
+	if !(enabled && s.Explicit == explicit && validUUID(s.AnonymousID) && Decide(o).Sendable) {
+		s.DecidedAt = o.now().Format(time.RFC3339)
+	}
+	s.Enabled, s.Explicit = enabled, explicit
+	if !enabled {
+		s.AnonymousID, s.Linked = "", false
+	} else {
+		s.Disclosure = DisclosureVersion
+		if !validUUID(s.AnonymousID) {
+			c := cavemanChoice(o)
+			s.Linked = c.Enabled != nil && *c.Enabled && validUUID(c.AnonymousID)
+			if s.Linked {
+				s.AnonymousID = strings.ToLower(c.AnonymousID)
+			} else if linkOnly {
+				return State{}, errNoLink
+			} else {
+				var b [16]byte
+				if _, err := rand.Read(b[:]); err != nil {
+					return State{}, err
+				}
+				b[6], b[8] = b[6]&0x0f|0x40, b[8]&0x3f|0x80
+				s.AnonymousID = fmt.Sprintf("%x-%x-%x-%x-%x", b[:4], b[4:6], b[6:8], b[8:10], b[10:])
+			}
+			s.InstallChannel = installChannel(o.Executable, o.Version)
+		}
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return State{}, err
+	}
+	if err := writeSafe(o.Base, "telemetry.json", append(b, '\n')); err != nil {
+		return State{}, err
+	}
+	return s, nil
+}
+
+func installChannel(exe, version string) string {
+	if repo.IsCachePath(exe) {
+		return "npx"
+	}
+	for _, part := range []string{"/Caskroom/", "/Cellar/", "/homebrew/", "/linuxbrew/"} {
+		if strings.Contains(filepath.ToSlash(exe), part) {
+			return "brew"
+		}
+	}
+	if version == "0.0.0-dev" {
+		return "source"
+	}
+	return "direct"
+}
+
+// OffNotice includes the former ID once, after a successful save removed it.
+func OffNotice(id string) string {
+	return "telemetry off · old install ID " + id + " · to delete what it sent: https://github.com/caveman-ai/blocks/blob/main/docs/TELEMETRY.md#delete-what-was-sent"
+}

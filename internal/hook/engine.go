@@ -48,6 +48,7 @@ type Event struct {
 	Block   string    `json:"block,omitempty"`
 	FP      string    `json:"fp,omitempty"`
 	Lines   int       `json:"lines,omitempty"` // script events only
+	Bytes   int       `json:"bytes,omitempty"` // script events only: body length in bytes
 	OK      *bool     `json:"ok,omitempty"`
 }
 
@@ -161,13 +162,13 @@ func Decide(cfg Config, in Input, deps Deps) Decision {
 // decide runs rules 3–9 for a pre call inside a repo.
 func decide(cfg Config, in Input, deps Deps, ts time.Time) Decision {
 	var d Decision
-	event := func(kind, block, fp string, lines int) {
-		d.Events = append(d.Events, Event{TS: ts, Session: in.Session, Kind: kind, Block: block, FP: fp, Lines: lines})
+	event := func(kind, block, fp string, lines, bytes int) {
+		d.Events = append(d.Events, Event{TS: ts, Session: in.Session, Kind: kind, Block: block, FP: fp, Lines: lines, Bytes: bytes})
 	}
 
 	// Rule 3: a block call.
 	if name, ok := deps.IsBlockCall(in.Command); ok {
-		event(KindCall, name, "", 0)
+		event(KindCall, name, "", 0, 0)
 		return d
 	}
 
@@ -176,13 +177,13 @@ func decide(cfg Config, in Input, deps Deps, ts time.Time) Decision {
 		// Rule 5: s.Edit. Rule 6: a block's matches; with hints off it falls through to capture.
 		if b := bestMatch(cfg.Blocks, s.Body, s.Edit); b != nil && cfg.HintEnabled {
 			d.Hint = runHint(*b)
-			event(KindHint, b.Name, s.FP, 0)
+			event(KindHint, b.Name, s.FP, 0, 0)
 		} else if s.Lines >= 10 && !s.Edit && s.FP != "" {
 			// Rule 7: capture one scrubbed sighting.
 			if err := deps.Append(s.FP, sighting(in, s, deps.Scrub, ts)); err != nil {
 				logErr(deps, err)
 			} else {
-				event(KindScript, "", s.FP, s.Lines)
+				event(KindScript, "", s.FP, s.Lines, len(s.Body))
 			}
 		}
 	}
@@ -192,7 +193,7 @@ func decide(cfg Config, in Input, deps Deps, ts time.Time) Decision {
 		if ext, ok := deps.StructuredDump(in.Command); ok {
 			if h, block := dumpHint(cfg.Blocks, ext, in.Session, deps.Cache); h != "" {
 				d.Hint = h
-				event(KindHint, block, "", 0)
+				event(KindHint, block, "", 0, 0)
 			}
 		}
 	}
@@ -212,7 +213,7 @@ func decide(cfg Config, in Input, deps Deps, ts time.Time) Decision {
 			} else {
 				d.Hint += " " + PromoteHint
 			}
-			event(KindPromoteHint, "", "", 0)
+			event(KindPromoteHint, "", "", 0, 0)
 			for _, fp := range fresh {
 				deps.Cache.MarkPromoteHinted(fp, day)
 			}

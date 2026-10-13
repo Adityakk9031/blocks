@@ -52,6 +52,7 @@ func scanCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprint(c.OutOrStdout(), scan.Format(rep))
+			recordScanTelemetry(c, rep, window)
 			return nil
 		},
 	}

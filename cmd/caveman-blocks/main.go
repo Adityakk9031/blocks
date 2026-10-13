@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/caveman-ai/blocks/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -22,9 +23,28 @@ Exit codes: 0 success; 1 failure (lint finding, failed or stale verify, stale sy
 func main() { os.Exit(run()) }
 
 // run executes the CLI and returns the process exit code.
-func run() int {
+func run() (code int) {
 	root := newRoot()
-	err := root.Execute()
+	var session *commandTelemetry
+	if telemetryInvocation(os.Args[1:]) && telemetryInteractive() {
+		session = beginTelemetry(telemetryOptions(), true, os.Stderr, os.Args[1:])
+		attachTelemetry(root, session)
+	}
+	// A command that counts something (a run, a verify) marks an off day before it counts, so being
+	// killed cannot leave the day unmarked, and again when it ends, for one that ran past midnight.
+	// After beginTelemetry: the command that prints the disclosure must not mark its own day. The
+	// hook does its own marking (hookObserve).
+	observe := len(os.Args) > 1 && os.Args[1] != "hook"
+	if observe {
+		telemetry.Observe(telemetryOptions())
+	}
+	resolved, err := root.ExecuteC()
+	if observe {
+		telemetry.Observe(telemetryOptions())
+	}
+	if session != nil {
+		defer func() { session.end(resolved, code) }()
+	}
 	var ex exitError
 	switch {
 	case err == nil:
@@ -89,7 +109,7 @@ func newRoot() *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.AddCommand(
 		initCmd(), hooksCmd(), addCmd(), runCmd(), lintCmd(), verifyCmd(), syncCmd(), scanCmd(),
-		promoteCmd(), retireCmd(), exportCmd(), statsCmd(), hookCmd(), doctorCmd(),
+		promoteCmd(), retireCmd(), exportCmd(), statsCmd(), hookCmd(), doctorCmd(), telemetryCmd(),
 		versionCmd(),
 	)
 	return root

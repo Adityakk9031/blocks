@@ -3,11 +3,8 @@
 package stats
 
 import (
-	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -32,6 +29,7 @@ const (
 type Event struct {
 	TS            time.Time `json:"ts"`
 	Session       string    `json:"session"`
+	Harness       string    `json:"harness,omitempty"`
 	Kind          string    `json:"kind"`
 	Block         string    `json:"block,omitempty"`
 	FP            string    `json:"fp,omitempty"`
@@ -40,6 +38,7 @@ type Event struct {
 	BytesReturned int       `json:"bytes_returned,omitempty"`
 	Exit          *int      `json:"exit,omitempty"`
 	Lines         int       `json:"lines,omitempty"` // script events: body length
+	Bytes         int       `json:"bytes,omitempty"` // script events: body length in bytes, never the body
 }
 
 // Append writes e as one line to <stateDir>/stats.jsonl, created 0600, never through a symlink.
@@ -84,56 +83,31 @@ type Summary struct {
 // the window land in Summary.Idle. Malformed lines are skipped. A missing file is an empty summary.
 func Summarize(stateDir string, since time.Duration, singleSession []string) (Summary, error) {
 	s := Summary{Since: since}
-	f, err := os.Open(filepath.Join(stateDir, "stats.jsonl"))
-	if errors.Is(err, fs.ErrNotExist) {
-		s.Idle = append([]string(nil), singleSession...)
-		sort.Strings(s.Idle)
-		return s, nil
+	from := time.Time{}
+	if since > 0 {
+		from = time.Now().Add(-since)
 	}
+	events, err := readEvents(stateDir, from, time.Time{})
 	if err != nil {
 		return s, err
 	}
-	defer f.Close()
-
-	var events []Event
-	cutoff := time.Now().Add(-since)
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), 1024*1024)
-	for sc.Scan() {
-		var e Event
-		if json.Unmarshal(sc.Bytes(), &e) != nil || since > 0 && e.TS.Before(cutoff) {
-			continue
-		}
-		events = append(events, e)
-	}
-	if err := sc.Err(); err != nil {
-		return s, err
-	}
-	sort.SliceStable(events, func(i, j int) bool { return events[i].TS.Before(events[j].TS) })
-
-	type key struct{ session, block string }
-	pending := map[key]bool{} // an unanswered hint per (session, block)
+	pending := hintPairs{}
 	sessions := map[string]bool{}
 	ran := map[string]bool{}
 	for _, e := range events {
 		if e.Session != "" {
 			sessions[e.Session] = true
 		}
-		k := key{e.Session, e.Block}
+		if pending.followed(e) {
+			s.HintsFollowed++
+		}
 		switch e.Kind {
 		case KindScript:
 			s.Scripts++
 		case KindHint:
 			s.Hints++
-			if e.Session != "" && e.Block != "" {
-				pending[k] = true // a repeated hint replaces the earlier one, which stays unfollowed
-			}
 		case KindCall:
 			s.Calls++
-			if pending[k] {
-				s.HintsFollowed++
-				delete(pending, k)
-			}
 		case KindRun:
 			s.Runs++
 			ran[e.Block] = true
