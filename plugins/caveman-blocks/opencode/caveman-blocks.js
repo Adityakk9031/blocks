@@ -13,7 +13,7 @@ import { join } from "node:path";
 const INSTALLED = "";
 
 function binary() {
-  for (const p of [INSTALLED, process.env.CAVEMAN_BLOCKS_BIN, join(homedir(), ".local/share/caveman-blocks/bin/caveman-blocks")]) {
+  for (const p of [INSTALLED, process.env.CAVEMAN_BLOCKS_BIN, join(homedir(), ".local/share/caveman-blocks/bin/caveman-blocks" + (process.platform === "win32" ? ".exe" : ""))]) {
     if (p && existsSync(p)) return p;
   }
   return "caveman-blocks"; // PATH; a missing binary is swallowed by hook()

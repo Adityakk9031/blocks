@@ -125,6 +125,44 @@ func TestHooksConfigDirEnv(t *testing.T) {
 	}
 }
 
+// TestDropLegacyBinary: the extensionless Windows copy goes once no hook entry runs it, and never
+// on a host whose binary has no .exe.
+func TestDropLegacyBinary(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	legacy := filepath.Join(home, "bin", "caveman-blocks")
+	touch := func() {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(legacy, nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exists := func() bool { _, err := os.Stat(legacy); return err == nil }
+
+	touch()
+	if dropLegacyBinary(legacy); !exists() {
+		t.Fatal("removed the binary itself on a host without .exe")
+	}
+	f, _ := install.For("codex-hooks")
+	codex := filepath.Join(home, ".codex", "hooks.json")
+	if _, err := f.Install(codex, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if dropLegacyBinary(legacy + ".exe"); !exists() {
+		t.Fatal("removed a copy the codex hook still runs")
+	}
+	if _, err := f.Install(codex, legacy+".exe"); err != nil {
+		t.Fatal(err)
+	}
+	if dropLegacyBinary(legacy + ".exe"); exists() {
+		t.Fatal("legacy copy left behind with no hook running it")
+	}
+}
+
 func TestHooksStatusJSONNoHarness(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

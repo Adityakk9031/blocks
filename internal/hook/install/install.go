@@ -19,14 +19,15 @@ import (
 )
 
 // marker matches exactly the command entries writes, `<bin> hook --harness <d>[ --phase pre|post]`,
-// where bin is an absolute path ending in /caveman-blocks or \caveman-blocks.exe, bare or single-quoted
-// by quote. Group 1 is bin as written. A user's own wrapper around caveman-blocks is not ours.
+// where bin is an absolute path ending in /caveman-blocks, or a drive-letter path ending in
+// \caveman-blocks.exe or \caveman-blocks (v0.1.0-rc.4 wrote the Windows copy without .exe), bare or
+// single-quoted by quote. Group 1 is bin as written. A user's own wrapper around caveman-blocks is not ours.
 var marker = regexp.MustCompile(`^(` + binPattern(`\S*`) + `|'(?:` + binPattern(`(?:[^']|'\\'')*`) + `)'` +
 	`) hook --harness [a-z]+(?: --phase (?:pre|post))?$`)
 
 // binPattern is an absolute caveman-blocks path whose directory part matches dir.
 func binPattern(dir string) string {
-	return `(?:/` + dir + `)?/caveman-blocks|[A-Za-z]:(?:\\` + dir + `)?\\caveman-blocks\.exe`
+	return `(?:/` + dir + `)?/caveman-blocks|[A-Za-z]:(?:\\` + dir + `)?\\caveman-blocks(?:\.exe)?`
 }
 
 // Format is one config file shape, filled from the profile that uses it.

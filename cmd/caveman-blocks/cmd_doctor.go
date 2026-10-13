@@ -31,7 +31,7 @@ func doctorCmd() *cobra.Command {
 			if p, changed := refreshBinary(); changed {
 				report(true, "refreshed the hook's copy at %s to %s", p, version)
 			}
-			copyPath := filepath.Join(repo.BinaryHome(), "caveman-blocks")
+			copyPath := repo.BinaryPath()
 			if v := repo.InstalledVersion(copyPath); v == "" {
 				report(false, "no hook binary at %s (run caveman-blocks hooks install)", copyPath)
 			} else {

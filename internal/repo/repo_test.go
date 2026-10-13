@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -303,5 +304,20 @@ func TestLoadConfigAtSubdir(t *testing.T) {
 	}
 	if c, err := LoadConfigAt(top, "HEAD"); err != nil || c.IndexMax != 3 {
 		t.Errorf("top policy = %+v, %v", c, err)
+	}
+}
+
+func TestBinaryName(t *testing.T) {
+	for goos, want := range map[string]string{
+		"windows": "caveman-blocks.exe", "darwin": "caveman-blocks", "linux": "caveman-blocks",
+	} {
+		if got := BinaryName(goos); got != want {
+			t.Errorf("BinaryName(%s) = %s, want %s", goos, got, want)
+		}
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
+	if got, want := BinaryPath(), filepath.Join(BinaryHome(), BinaryName(runtime.GOOS)); got != want {
+		t.Errorf("BinaryPath() = %s, want %s", got, want)
 	}
 }

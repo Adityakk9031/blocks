@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -249,7 +250,24 @@ func IsCachePath(p string) bool {
 	return false
 }
 
-// InstallBinary copies src to BinaryHome()/caveman-blocks when the copy is missing or its
+// BinaryName is the installed copy's file name on goos. Windows runs a file only by its extension.
+func BinaryName(goos string) string {
+	if goos == "windows" {
+		return "caveman-blocks.exe"
+	}
+	return "caveman-blocks"
+}
+
+// BinaryPath is the installed copy hooks point at, "" without a home directory.
+func BinaryPath() string {
+	home := BinaryHome()
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, BinaryName(runtime.GOOS))
+}
+
+// InstallBinary copies src to BinaryPath() when the copy is missing or its
 // `version` output does not end in version. It writes a temp file and renames it, never in place,
 // so a running hook is not disturbed.
 func InstallBinary(src, version string) (path string, changed bool, err error) {
@@ -257,7 +275,7 @@ func InstallBinary(src, version string) (path string, changed bool, err error) {
 	if home == "" {
 		return "", false, errors.New("no home directory")
 	}
-	path = filepath.Join(home, "caveman-blocks")
+	path = BinaryPath()
 	if InstalledVersion(path) == version {
 		return path, false, nil
 	}

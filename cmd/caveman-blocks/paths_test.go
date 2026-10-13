@@ -190,7 +190,7 @@ func TestRefreshBinaryOnlyUpgrades(t *testing.T) {
 		{"0.2.0", "not-a-version", true}, {"0.0.0-dev", "garbage", false}, {"15e4335", "0.1.0", false},
 	} {
 		t.Setenv("HOME", t.TempDir())
-		installed := filepath.Join(repo.BinaryHome(), "caveman-blocks")
+		installed := repo.BinaryPath()
 		if err := os.MkdirAll(filepath.Dir(installed), 0o755); err != nil {
 			t.Fatal(err)
 		}

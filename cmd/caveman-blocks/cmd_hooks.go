@@ -60,6 +60,7 @@ func hooksCmd() *cobra.Command {
 					fmt.Fprintf(out, "  %s\n", p.TrustNote)
 				}
 			}
+			dropLegacyBinary(bin)
 			return nil
 		},
 	}, &cobra.Command{
@@ -86,6 +87,22 @@ func hooksCmd() *cobra.Command {
 		},
 	}, statusCmd(&names))
 	return c
+}
+
+// dropLegacyBinary removes the extensionless copy v0.1.0-rc.4 wrote on Windows, next to bin, once no
+// harness's hook still runs it (an install scoped by --harness leaves the other harnesses' entries).
+func dropLegacyBinary(bin string) {
+	legacy, ok := strings.CutSuffix(bin, ".exe")
+	if !ok {
+		return
+	}
+	all, _ := hook.Profiles()
+	for _, p := range all {
+		if s, _ := harnessState(p); s.Binary == legacy {
+			return
+		}
+	}
+	os.Remove(legacy)
 }
 
 func statusCmd(names *[]string) *cobra.Command {
