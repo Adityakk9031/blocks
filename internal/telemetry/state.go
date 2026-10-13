@@ -109,6 +109,9 @@ type Decision struct {
 	// HubCovered: nothing is started yet, Blocks has no explicit choice, and the Caveman CLI's yes was
 	// given under a disclosure that names Blocks, so Enroll may save the linked default silently.
 	HubCovered bool
+	// Enrolled: this Observe call is the one whose save started the install under the Caveman CLI's
+	// notice. The caller sends first_run for it; a concurrent enroll that lost the lock does not.
+	Enrolled bool
 }
 
 // EnvOff names the environment switch that has telemetry off for this process, or "".
@@ -190,7 +193,9 @@ func Observe(o Options) Decision {
 	}
 	NoteOff(o.Base, o.now())
 	if d.HubCovered && Enroll(o) {
-		return Decide(o)
+		d = Decide(o)
+		d.Enrolled = true
+		return d
 	}
 	return d
 }
@@ -199,12 +204,14 @@ func Observe(o Options) Decision {
 // Blocks (Decision.HubCovered). Any process may call it, the hook and commands without a terminal
 // included: that CLI printed the notice. decided_at is now, so nothing counted before is sent. It
 // never mints an ID of its own: should the link stop holding before the save, nothing is saved.
+// It reports true only to the call whose locked save wrote the new default: of processes enrolling at
+// once, exactly one.
 func Enroll(o Options) bool {
 	if !Decide(o).HubCovered {
 		return false
 	}
-	s, err := saveChoice(o, true, false, true)
-	return err == nil && s.Linked
+	_, err := saveChoice(o, true, false, true)
+	return err == nil
 }
 
 // HubWouldCover reports whether, but for an environment switch, Enroll would start this install
@@ -322,11 +329,11 @@ func saveChoice(o Options, enabled, explicit, linkOnly bool) (State, error) {
 	}
 	defer unlock()
 	s, _, _ := loadState(o.Base)
+	if linkOnly && !Decide(o).HubCovered {
+		return State{}, errNoLink // started already (another process won the lock), explicit, or no link
+	}
 	if !explicit && s.Explicit {
 		return s, nil
-	}
-	if linkOnly && !hubCovers(o) {
-		return State{}, errNoLink
 	}
 	if s.Linked && !linkHolds(o, s) {
 		s.AnonymousID, s.Linked = "", false // the Caveman CLI retired that ID; never keep using it

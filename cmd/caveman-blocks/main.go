@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/caveman-ai/blocks/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -36,11 +35,11 @@ func run() (code int) {
 	// hook does its own marking (hookObserve).
 	observe := len(os.Args) > 1 && os.Args[1] != "hook"
 	if observe {
-		telemetry.Observe(telemetryOptions())
+		observeTelemetry(session == nil)
 	}
 	resolved, err := root.ExecuteC()
 	if observe {
-		telemetry.Observe(telemetryOptions())
+		observeTelemetry(session == nil)
 	}
 	if session != nil {
 		defer func() { session.end(resolved, code) }()

@@ -131,6 +131,30 @@ func TestHubEnrollmentNeverUnderASwitch(t *testing.T) {
 	}
 }
 
+// Of processes enrolling at once, only the one whose save wrote the default reports it (first_run).
+func TestConcurrentEnrollReportsOnce(t *testing.T) {
+	for range 10 {
+		o := testOptions(t)
+		putHub(t, o, hubConfig(true, 6, hubID))
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		enrolled := 0
+		for range 8 {
+			wg.Go(func() {
+				if d := Observe(o); d.Enrolled {
+					mu.Lock()
+					enrolled++
+					mu.Unlock()
+				}
+			})
+		}
+		wg.Wait()
+		if d := Observe(o); enrolled != 1 || d.Enrolled || !d.Sendable {
+			t.Fatalf("enrolled %d times, then %+v", enrolled, d)
+		}
+	}
+}
+
 // An explicit off saved while an Enroll is in flight (it decided before the off) is never replaced.
 func TestExplicitOffSurvivesStaleEnroll(t *testing.T) {
 	o := testOptions(t)
@@ -138,9 +162,9 @@ func TestExplicitOffSurvivesStaleEnroll(t *testing.T) {
 	if _, err := SaveChoice(o, false, true); err != nil {
 		t.Fatal(err)
 	}
-	// What a stale Enroll does after its check passed: save the default.
-	if s, err := saveChoice(o, true, false, true); err != nil || s.Enabled || !s.Explicit {
-		t.Fatalf("stale default save: %+v %v", s, err)
+	// What a stale Enroll does after its check passed: try to save the default. Nothing is written.
+	if _, err := saveChoice(o, true, false, true); err == nil {
+		t.Fatal("stale default save reported a write")
 	}
 	if d := Decide(o); d.Status != "off" || !d.State.Explicit || d.State.AnonymousID != "" {
 		t.Fatalf("explicit off downgraded: %+v", d)
